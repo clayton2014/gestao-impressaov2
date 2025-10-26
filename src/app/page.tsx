@@ -5,6 +5,7 @@ import { useAppStore } from '@/lib/store';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import Dashboard from '@/components/Dashboard';
+import AuthModal from '@/components/AuthModal';
 import { 
   ClientsPage,
   MaterialsPage,
@@ -31,6 +32,7 @@ const routes: Record<string, React.ReactNode> = {
 export default function Home() {
   const currentPage = useAppStore(s => s.currentPage) || "dashboard";
   const sidebarOpen = useAppStore(s => s.sidebarOpen);
+  const userId = useAppStore(s => s.auth.userId);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -56,6 +58,11 @@ export default function Home() {
         </div>
       </div>
     );
+  }
+
+  // Se não estiver logado, mostrar tela de autenticação
+  if (!userId) {
+    return <AuthModal />;
   }
 
   const View = routes[currentPage] ?? <Dashboard />;

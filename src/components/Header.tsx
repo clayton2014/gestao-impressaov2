@@ -10,7 +10,7 @@ import {
   Sun,
   Moon
 } from 'lucide-react';
-import { useAppStore } from '@/lib/store';
+import useAppStore, { actions } from '@/lib/store';
 import { useTranslation } from '@/hooks/useTranslation';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,41 +22,30 @@ import {
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import { SafeSelect } from '@/components/ui/safe-select';
+import UserMenu from '@/components/UserMenu';
 
 export default function Header() {
-  const { 
-    sidebarOpen,
-    setSidebarOpen,
-    currentLocale, 
-    currentCurrency,
-    theme,
-    setLocale,
-    setCurrency,
-    setTheme,
-    user,
-    currentPage
-  } = useAppStore();
+  const sidebarOpen = useAppStore(s => s.sidebarOpen);
+  const currentPage = useAppStore(s => s.currentPage);
+  const locale = useAppStore(s => s.locale);
+  const currency = useAppStore(s => s.currency);
+  const theme = useAppStore(s => s.theme);
+  const user = useAppStore(s => s.users.find(u => u.id === s.auth.userId) ?? null);
   
   const { t } = useTranslation();
 
   const getPageTitle = () => {
     switch (currentPage) {
-      case 'dashboard': return t('nav.dashboard');
-      case 'services': return t('nav.services');
-      case 'clients': return t('nav.clients');
-      case 'materials': return t('nav.materials');
-      case 'inks': return t('nav.inks');
-      case 'reports': return t('nav.reports');
-      case 'settings': return t('nav.settings');
-      case 'plans': return t('nav.plans');
-      case 'profile': return t('nav.profile');
-      default: return t('nav.dashboard');
+      case 'dashboard': return 'Dashboard';
+      case 'services': return 'Serviços';
+      case 'clients': return 'Clientes';
+      case 'materials': return 'Materiais';
+      case 'inks': return 'Tintas';
+      case 'reports': return 'Relatórios';
+      case 'settings': return 'Configurações';
+      case 'plans': return 'Planos';
+      default: return 'Dashboard';
     }
-  };
-
-  const handleLogout = () => {
-    // Clear user data and redirect to login
-    window.location.href = '/';
   };
 
   return (
@@ -66,7 +55,7 @@ export default function Header() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
+            onClick={() => actions.setSidebarOpen(!sidebarOpen)}
             className="mr-2"
           >
             <Menu className="h-4 w-4" />
@@ -81,7 +70,7 @@ export default function Header() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={() => actions.setSidebarOpen(!sidebarOpen)}
               className="md:hidden"
             >
               <Menu className="h-4 w-4" />
@@ -91,24 +80,22 @@ export default function Header() {
           <nav className="flex items-center space-x-2">
             {/* Language Selector */}
             <SafeSelect
-              value={currentLocale}
-              onChange={setLocale}
+              value={locale}
+              onChange={actions.setLocale}
               options={[
                 { value: "pt-BR", label: "🇧🇷 PT" },
-                { value: "en-US", label: "🇺🇸 EN" },
-                { value: "es-ES", label: "🇪🇸 ES" }
+                { value: "en", label: "🇺🇸 EN" }
               ]}
               className="w-20"
             />
 
             {/* Currency Selector */}
             <SafeSelect
-              value={currentCurrency}
-              onChange={setCurrency}
+              value={currency}
+              onChange={actions.setCurrency}
               options={[
                 { value: "BRL", label: "R$" },
-                { value: "USD", label: "$" },
-                { value: "EUR", label: "€" }
+                { value: "USD", label: "$" }
               ]}
               className="w-16"
             />
@@ -117,7 +104,7 @@ export default function Header() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onClick={() => actions.setTheme(theme === 'dark' ? 'light' : 'dark')}
             >
               {theme === 'dark' ? (
                 <Sun className="h-4 w-4" />
@@ -132,35 +119,7 @@ export default function Header() {
             </Button>
 
             {/* User Menu */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  <User className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>
-                  <div className="flex flex-col space-y-1">
-                    <p className="text-sm font-medium leading-none">
-                      {user?.nome || 'Usuário'}
-                    </p>
-                    <p className="text-xs leading-none text-muted-foreground">
-                      {user?.email || 'usuario@exemplo.com'}
-                    </p>
-                  </div>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <User className="mr-2 h-4 w-4" />
-                  <span>{t('nav.profile')}</span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleLogout}>
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>{t('auth.logout')}</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <UserMenu />
           </nav>
         </div>
       </div>

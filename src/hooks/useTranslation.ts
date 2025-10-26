@@ -50,8 +50,8 @@ const dict: Record<string, Record<string, string>> = {
  * Lê locale/currency do store (client) e expõe t() e formatCurrency().
  */
 export function useTranslation() {
-  const localeFromStore = useAppStore((s) => s.settings.locale);
-  const currencyFromStore = useAppStore((s) => s.settings.currency);
+  const localeFromStore = useAppStore((s) => s.locale);
+  const currencyFromStore = useAppStore((s) => s.currency);
 
   const locale = useMemo(() => mapLocale(localeFromStore), [localeFromStore]);
   const currency = useMemo(

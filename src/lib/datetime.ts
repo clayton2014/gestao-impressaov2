@@ -1,6 +1,3 @@
-// src/lib/datetime.ts
-const LOCALE_FALLBACK = "pt-BR" as const;
-
 export type AppLocale = "pt-BR" | "en-US";
 
 export function mapLocale(locale?: string): AppLocale {
@@ -16,10 +13,8 @@ export function parseDateInput(input: any): Date | null {
     return isNaN(+d) ? null : d;
   }
   if (typeof input === "string") {
-    // tenta ISO, yyyy-mm-dd, etc.
     const d = new Date(input);
     if (!isNaN(+d)) return d;
-    // dd/mm/yyyy
     const m = input.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
     if (m) {
       const [_, dd, mm, yyyy] = m;
@@ -37,7 +32,7 @@ export function formatDate(
 ): string {
   const d = parseDateInput(value);
   if (!d) return "-";
-  const loc = mapLocale(locale || (typeof navigator !== "undefined" ? navigator.language : LOCALE_FALLBACK));
+  const loc = mapLocale(locale || (typeof navigator !== "undefined" ? navigator.language : "pt-BR"));
   const opts: Intl.DateTimeFormatOptions = options ?? { year: "numeric", month: "2-digit", day: "2-digit" };
   try {
     return new Intl.DateTimeFormat(loc, opts).format(d);
@@ -53,7 +48,7 @@ export function formatDateTime(
 ): string {
   const d = parseDateInput(value);
   if (!d) return "-";
-  const loc = mapLocale(locale || (typeof navigator !== "undefined" ? navigator.language : LOCALE_FALLBACK));
+  const loc = mapLocale(locale || (typeof navigator !== "undefined" ? navigator.language : "pt-BR"));
   const opts: Intl.DateTimeFormatOptions =
     options ?? { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" };
   try {

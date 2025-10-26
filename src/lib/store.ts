@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { 
   User, 
+  AuthUser,
   Client, 
   Material, 
   Ink, 
@@ -10,6 +11,7 @@ import type {
   Locale,
   Currency 
 } from './types';
+import { hashPassword, verifyPassword } from './auth';
 
 interface Settings {
   company_name: string;
@@ -28,6 +30,10 @@ interface AppState {
   currency: Currency;
   theme: 'light' | 'dark';
   
+  // Auth
+  users: AuthUser[];
+  auth: { userId: string | null };
+  
   // Data
   clients: Client[];
   materials: Material[];
@@ -37,6 +43,11 @@ interface AppState {
   // UI State
   sidebarOpen: boolean;
   currentPage: string;
+}
+
+// Simple UUID generator
+function generateId(): string {
+  return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
 
 // Default state
@@ -52,6 +63,8 @@ const defaultState: AppState = {
   locale: 'pt-BR' as Locale,
   currency: 'BRL' as Currency,
   theme: 'dark' as const,
+  users: [],
+  auth: { userId: null },
   clients: [],
   materials: [],
   inks: [],
@@ -194,6 +207,71 @@ export const actions = {
   
   setCurrentPage: (page: string) => {
     updateState(state => ({ ...state, currentPage: page }));
+  },
+
+  // Auth actions
+  async registerUser(input: { nome: string; email: string; telefone: string; senha: string }) {
+    const s = getState();
+    const email = input.email.trim().toLowerCase();
+    const telefone = input.telefone.replace(/\D/g, "");
+    
+    if (s.users.some(u => u.email === email)) {
+      throw new Error("E-mail já cadastrado");
+    }
+    if (s.users.some(u => u.telefone === telefone)) {
+      throw new Error("Telefone já cadastrado");
+    }
+    
+    const { salt, hash } = await hashPassword(input.senha);
+    const user: AuthUser = { 
+      id: generateId(), 
+      nome: input.nome.trim(), 
+      email, 
+      telefone, 
+      passHash: hash, 
+      passSalt: salt, 
+      createdAt: new Date().toISOString() 
+    };
+    
+    updateState(state => ({ 
+      ...state, 
+      users: [...state.users, user], 
+      auth: { userId: user.id } 
+    }));
+    
+    return user;
+  },
+
+  async login(input: { ident: string; senha: string }) {
+    const s = getState();
+    const ident = input.ident.trim().toLowerCase();
+    const isPhone = /\d/.test(ident) && !ident.includes("@");
+    const normalizedPhone = ident.replace(/\D/g, "");
+    
+    const user = s.users.find(u => 
+      isPhone ? u.telefone === normalizedPhone : u.email === ident
+    );
+    
+    if (!user) {
+      throw new Error("Usuário não encontrado");
+    }
+    
+    const ok = await verifyPassword(input.senha, user.passSalt, user.passHash);
+    if (!ok) {
+      throw new Error("Senha inválida");
+    }
+    
+    updateState(state => ({ ...state, auth: { userId: user.id } }));
+    return user;
+  },
+
+  logout() { 
+    updateState(state => ({ ...state, auth: { userId: null } }));
+  },
+
+  getCurrentUser(): AuthUser | null { 
+    const s = getState(); 
+    return s.users.find(u => u.id === s.auth.userId) ?? null; 
   }
 };
 

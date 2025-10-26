@@ -9,6 +9,16 @@ export interface User {
   logoUrl?: string;
 }
 
+export interface AuthUser {
+  id: string;
+  nome: string;
+  email: string;      // único
+  telefone: string;   // único
+  passHash: string;   // base64
+  passSalt: string;   // base64
+  createdAt: string;  // ISO
+}
+
 export interface Client {
   id: string;
   nome: string;
