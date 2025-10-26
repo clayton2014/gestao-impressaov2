@@ -1,102 +1,52 @@
 "use client";
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import type { 
-  User, 
-  AuthUser,
-  Client, 
-  Material, 
-  Ink, 
-  ServiceOrder, 
-  DashboardMetrics,
   Locale,
   Currency 
 } from './types';
-import { hashPassword, verifyPassword } from './auth';
-
-interface Settings {
-  company_name: string;
-  company_logo?: string;
-  default_markup: number;
-  default_unit: 'm' | 'm2';
-  tax_percent: number;
-  dashboard_cards: string[];
-}
 
 interface AppState {
-  // User & Settings
-  user: User | null;
-  settings: Settings;
+  // UI State only - data comes from Supabase
   locale: Locale;
   currency: Currency;
-  theme: 'light' | 'dark';
-  
-  // Auth
-  users: AuthUser[];
-  auth: { userId: string | null };
-  
-  // Data
-  clients: Client[];
-  materials: Material[];
-  inks: Ink[];
-  services: ServiceOrder[];
-  
-  // UI State
+  theme: 'light' | 'dark' | 'system';
   sidebarOpen: boolean;
   currentPage: string;
 }
 
-// Simple UUID generator
-function generateId(): string {
-  return Math.random().toString(36).substring(2) + Date.now().toString(36);
-}
-
 // Default state
 const defaultState: AppState = {
-  user: null,
-  settings: {
-    company_name: 'Gráfica Digital Pro',
-    default_markup: 30,
-    default_unit: 'm2' as const,
-    tax_percent: 0,
-    dashboard_cards: ['revenue', 'cost', 'profit', 'margin', 'production', 'quotes']
-  },
   locale: 'pt-BR' as Locale,
   currency: 'BRL' as Currency,
-  theme: 'dark' as const,
-  users: [],
-  auth: { userId: null },
-  clients: [],
-  materials: [],
-  inks: [],
-  services: [],
+  theme: 'system' as const,
   sidebarOpen: true,
   currentPage: 'dashboard'
 };
 
-// Simple store implementation without zustand
+// Simple store implementation
 let globalState = { ...defaultState };
 const listeners = new Set<() => void>();
 
-// Load from localStorage on client
+// Load from localStorage on client (UI preferences only)
 if (typeof window !== 'undefined') {
   try {
-    const stored = localStorage.getItem('gp-app-store');
+    const stored = localStorage.getItem('gp-ui-preferences');
     if (stored) {
       const parsed = JSON.parse(stored);
       globalState = { ...defaultState, ...parsed };
     }
   } catch (error) {
-    console.warn('Failed to load state from localStorage:', error);
+    console.warn('Failed to load UI preferences from localStorage:', error);
   }
 }
 
-// Save to localStorage
+// Save to localStorage (UI preferences only)
 const saveToStorage = () => {
   if (typeof window !== 'undefined') {
     try {
-      localStorage.setItem('gp-app-store', JSON.stringify(globalState));
+      localStorage.setItem('gp-ui-preferences', JSON.stringify(globalState));
     } catch (error) {
-      console.warn('Failed to save state to localStorage:', error);
+      console.warn('Failed to save UI preferences to localStorage:', error);
     }
   }
 };
@@ -123,11 +73,11 @@ const getCurrencyFromLocale = (locale: Locale): Currency => {
 };
 
 // Detect theme preference
-const detectTheme = (): 'light' | 'dark' => {
+const detectTheme = (): 'light' | 'dark' | 'system' => {
   if (typeof window === 'undefined') {
-    return 'dark';
+    return 'system';
   }
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return 'system'; // Always default to system
 };
 
 // Export functions for non-React usage
@@ -156,35 +106,8 @@ export function useAppStore<T = AppState>(selector?: (state: AppState) => T): T 
   return state;
 }
 
-// Actions object for easier usage
+// Actions object for UI state management
 export const actions = {
-  setUser: (user: User | null) => {
-    updateState(state => ({ ...state, user }));
-  },
-  
-  patchSettings: (newSettings: Partial<Settings>) => {
-    updateState(state => ({
-      ...state,
-      settings: { ...state.settings, ...newSettings }
-    }));
-  },
-  
-  setClients: (clients: Client[]) => {
-    updateState(state => ({ ...state, clients }));
-  },
-  
-  setMaterials: (materials: Material[]) => {
-    updateState(state => ({ ...state, materials }));
-  },
-  
-  setInks: (inks: Ink[]) => {
-    updateState(state => ({ ...state, inks }));
-  },
-  
-  setServices: (services: ServiceOrder[]) => {
-    updateState(state => ({ ...state, services }));
-  },
-  
   setLocale: (locale: Locale) => {
     const currency = getCurrencyFromLocale(locale);
     updateState(state => ({ ...state, locale, currency }));
@@ -194,10 +117,15 @@ export const actions = {
     updateState(state => ({ ...state, currency }));
   },
   
-  setTheme: (theme: 'light' | 'dark') => {
+  setTheme: (theme: 'light' | 'dark' | 'system') => {
     updateState(state => ({ ...state, theme }));
     if (typeof window !== 'undefined') {
-      document.documentElement.classList.toggle('dark', theme === 'dark');
+      if (theme === 'system') {
+        const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.classList.toggle('dark', systemTheme === 'dark');
+      } else {
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+      }
     }
   },
   
@@ -207,71 +135,6 @@ export const actions = {
   
   setCurrentPage: (page: string) => {
     updateState(state => ({ ...state, currentPage: page }));
-  },
-
-  // Auth actions
-  async registerUser(input: { nome: string; email: string; telefone: string; senha: string }) {
-    const s = getState();
-    const email = input.email.trim().toLowerCase();
-    const telefone = input.telefone.replace(/\D/g, "");
-    
-    if (s.users.some(u => u.email === email)) {
-      throw new Error("E-mail já cadastrado");
-    }
-    if (s.users.some(u => u.telefone === telefone)) {
-      throw new Error("Telefone já cadastrado");
-    }
-    
-    const { salt, hash } = await hashPassword(input.senha);
-    const user: AuthUser = { 
-      id: generateId(), 
-      nome: input.nome.trim(), 
-      email, 
-      telefone, 
-      passHash: hash, 
-      passSalt: salt, 
-      createdAt: new Date().toISOString() 
-    };
-    
-    updateState(state => ({ 
-      ...state, 
-      users: [...state.users, user], 
-      auth: { userId: user.id } 
-    }));
-    
-    return user;
-  },
-
-  async login(input: { ident: string; senha: string }) {
-    const s = getState();
-    const ident = input.ident.trim().toLowerCase();
-    const isPhone = /\d/.test(ident) && !ident.includes("@");
-    const normalizedPhone = ident.replace(/\D/g, "");
-    
-    const user = s.users.find(u => 
-      isPhone ? u.telefone === normalizedPhone : u.email === ident
-    );
-    
-    if (!user) {
-      throw new Error("Usuário não encontrado");
-    }
-    
-    const ok = await verifyPassword(input.senha, user.passSalt, user.passHash);
-    if (!ok) {
-      throw new Error("Senha inválida");
-    }
-    
-    updateState(state => ({ ...state, auth: { userId: user.id } }));
-    return user;
-  },
-
-  logout() { 
-    updateState(state => ({ ...state, auth: { userId: null } }));
-  },
-
-  getCurrentUser(): AuthUser | null { 
-    const s = getState(); 
-    return s.users.find(u => u.id === s.auth.userId) ?? null; 
   }
 };
 
@@ -281,13 +144,11 @@ export const useAppStoreWithActions = () => {
   
   return {
     ...state,
-    setUser: actions.setUser,
     setLocale: actions.setLocale,
     setCurrency: actions.setCurrency,
     setTheme: actions.setTheme,
     setSidebarOpen: actions.setSidebarOpen,
-    setCurrentPage: actions.setCurrentPage,
-    updateSettings: actions.patchSettings
+    setCurrentPage: actions.setCurrentPage
   };
 };
 
@@ -298,7 +159,6 @@ export default useAppStore;
 if (typeof window !== 'undefined') {
   setTimeout(() => {
     const detectedLocale = detectLocale();
-    const detectedTheme = detectTheme();
     
     // Only update if different from defaults and not already set by user
     if (globalState.locale === 'pt-BR' && detectedLocale !== 'pt-BR') {
@@ -310,6 +170,12 @@ if (typeof window !== 'undefined') {
     }
     
     // Apply theme to document
-    document.documentElement.classList.toggle('dark', globalState.theme === 'dark');
+    const currentTheme = globalState.theme;
+    if (currentTheme === 'system') {
+      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.classList.toggle('dark', systemTheme === 'dark');
+    } else {
+      document.documentElement.classList.toggle('dark', currentTheme === 'dark');
+    }
   }, 100);
 }

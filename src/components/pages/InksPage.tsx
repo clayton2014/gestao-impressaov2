@@ -9,65 +9,53 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, Palette, Droplets, AlertTriangle } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import { getInks, createInk, updateInk, deleteInk, checkPlanLimits } from '@/lib/database';
+import { Plus, Search, Edit, Trash2, Palette } from 'lucide-react';
+import { useTranslation, formatCurrency } from '@/hooks/useTranslation';
+import { InksDAO } from '@/lib/dao';
 import type { Ink } from '@/lib/types';
 import { toast } from 'sonner';
+import { useAppStore } from '@/lib/store';
 
 export default function InksPage() {
-  const { t, formatCurrency, formatDate } = useTranslation();
+  const { t, formatDate } = useTranslation();
+  const { currency, locale } = useAppStore();
   const [inks, setInks] = useState<Ink[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingInk, setEditingInk] = useState<Ink | null>(null);
-  const [planLimits, setPlanLimits] = useState({ canCreate: true, limit: 0, current: 0 });
 
   // Form state
   const [formData, setFormData] = useState({
-    nome: '',
-    custoPorLitro: '',
-    fornecedor: '',
-    estoqueMl: ''
+    name: '',
+    cost_per_liter: '',
   });
 
   const loadInks = async () => {
     setLoading(true);
     try {
-      const result = await getInks(page, 10, search);
-      setInks(result.data);
-      setTotalPages(result.totalPages);
+      const data = await InksDAO.list();
+      setInks(data);
     } catch (error) {
       console.error('Error loading inks:', error);
+      toast.error('Erro ao carregar tintas');
     } finally {
       setLoading(false);
     }
   };
 
-  const loadPlanLimits = async () => {
-    const limits = await checkPlanLimits('inks');
-    setPlanLimits(limits);
-  };
-
   useEffect(() => {
     loadInks();
-    loadPlanLimits();
-  }, [page, search]);
+  }, []);
 
   const handleSearch = (value: string) => {
     setSearch(value);
-    setPage(1);
   };
 
   const resetForm = () => {
     setFormData({
-      nome: '',
-      custoPorLitro: '',
-      fornecedor: '',
-      estoqueMl: ''
+      name: '',
+      cost_per_liter: '',
     });
     setEditingInk(null);
   };
@@ -76,10 +64,8 @@ export default function InksPage() {
     if (ink) {
       setEditingInk(ink);
       setFormData({
-        nome: ink.nome,
-        custoPorLitro: ink.custoPorLitro.toString(),
-        fornecedor: ink.fornecedor || '',
-        estoqueMl: ink.estoqueMl?.toString() || ''
+        name: ink.name || '',
+        cost_per_liter: ink.cost_per_liter?.toString() || '',
       });
     } else {
       resetForm();
@@ -90,80 +76,62 @@ export default function InksPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.nome.trim()) {
+    if (!formData.name.trim()) {
       toast.error('Nome é obrigatório');
       return;
     }
 
-    if (!formData.custoPorLitro || parseFloat(formData.custoPorLitro) <= 0) {
-      toast.error('Custo por litro deve ser maior que zero');
+    if (!formData.cost_per_liter || isNaN(Number(formData.cost_per_liter))) {
+      toast.error('Custo por litro deve ser um número válido');
       return;
     }
 
     try {
       const inkData = {
-        nome: formData.nome.trim(),
-        custoPorLitro: parseFloat(formData.custoPorLitro),
-        fornecedor: formData.fornecedor.trim() || undefined,
-        estoqueMl: formData.estoqueMl ? parseInt(formData.estoqueMl) : undefined
+        name: formData.name.trim(),
+        cost_per_liter: Number(formData.cost_per_liter),
       };
 
       if (editingInk) {
-        await updateInk(editingInk.id, inkData);
+        await InksDAO.update(editingInk.id, inkData);
+        toast.success('Tinta atualizada com sucesso!');
       } else {
-        await createInk(inkData);
+        await InksDAO.create(inkData);
+        toast.success('Tinta criada com sucesso!');
       }
-      
+
       setIsDialogOpen(false);
       resetForm();
       loadInks();
-      loadPlanLimits();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving ink:', error);
+      toast.error(error.message || 'Erro ao salvar tinta');
     }
   };
 
   const handleDelete = async (id: string) => {
     try {
-      await deleteInk(id);
+      await InksDAO.remove(id);
+      toast.success('Tinta excluída com sucesso!');
       loadInks();
-      loadPlanLimits();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error deleting ink:', error);
+      toast.error(error.message || 'Erro ao excluir tinta');
     }
   };
 
-  const getStockStatus = (ink: Ink) => {
-    if (!ink.estoqueMl) return null;
-    
-    if (ink.estoqueMl <= 500) {
-      return { status: 'low', color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' };
-    } else if (ink.estoqueMl <= 1000) {
-      return { status: 'medium', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' };
-    }
-    return { status: 'good', color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' };
-  };
-
-  const formatVolume = (ml: number) => {
-    if (ml >= 1000) {
-      return `${(ml / 1000).toFixed(1)}L`;
-    }
-    return `${ml}ml`;
-  };
+  // Filter inks
+  const filteredInks = inks.filter(ink =>
+    ink.name?.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
-            {t('inks.title')}
-          </h1>
-          <p className="text-slate-600 dark:text-slate-400 mt-1">
-            {planLimits.limit === Infinity 
-              ? `${planLimits.current} tintas` 
-              : `${planLimits.current}/${planLimits.limit} tintas`
-            }
+          <h1 className="text-3xl font-bold">Tintas</h1>
+          <p className="text-muted-foreground">
+            Gerencie suas tintas ({inks.length})
           </p>
         </div>
         
@@ -171,79 +139,51 @@ export default function InksPage() {
           <DialogTrigger asChild>
             <Button 
               onClick={() => handleOpenDialog()}
-              disabled={!planLimits.canCreate}
-              className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+              className="bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-600 hover:to-cyan-600"
             >
-              <Plus className="w-4 h-4 mr-2" />
-              {t('inks.newInk')}
+              <Plus className="mr-2 h-4 w-4" />
+              Nova Tinta
             </Button>
           </DialogTrigger>
-          
-          <DialogContent className="max-w-lg">
+          <DialogContent>
             <DialogHeader>
               <DialogTitle>
-                {editingInk ? t('inks.editInk') : t('inks.newInk')}
+                {editingInk ? 'Editar Tinta' : 'Nova Tinta'}
               </DialogTitle>
             </DialogHeader>
             
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <Label htmlFor="nome">{t('inks.inkName')} *</Label>
+              <div className="space-y-2">
+                <Label htmlFor="name">Nome *</Label>
                 <Input
-                  id="nome"
-                  value={formData.nome}
-                  onChange={(e) => setFormData({ ...formData, nome: e.target.value })}
+                  id="name"
+                  value={formData.name}
+                  onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                   placeholder="Nome da tinta"
                   required
                 />
               </div>
-              
-              <div>
-                <Label htmlFor="custoPorLitro">{t('inks.costPerLiter')} *</Label>
+
+              <div className="space-y-2">
+                <Label htmlFor="cost_per_liter">Custo por Litro *</Label>
                 <Input
-                  id="custoPorLitro"
+                  id="cost_per_liter"
                   type="number"
                   step="0.01"
                   min="0"
-                  value={formData.custoPorLitro}
-                  onChange={(e) => setFormData({ ...formData, custoPorLitro: e.target.value })}
+                  value={formData.cost_per_liter}
+                  onChange={(e) => setFormData(prev => ({ ...prev, cost_per_liter: e.target.value }))}
                   placeholder="0.00"
                   required
                 />
               </div>
-              
-              <div>
-                <Label htmlFor="fornecedor">{t('common.supplier')}</Label>
-                <Input
-                  id="fornecedor"
-                  value={formData.fornecedor}
-                  onChange={(e) => setFormData({ ...formData, fornecedor: e.target.value })}
-                  placeholder="Nome do fornecedor"
-                />
-              </div>
-              
-              <div>
-                <Label htmlFor="estoqueMl">{t('inks.stockMl')}</Label>
-                <Input
-                  id="estoqueMl"
-                  type="number"
-                  min="0"
-                  value={formData.estoqueMl}
-                  onChange={(e) => setFormData({ ...formData, estoqueMl: e.target.value })}
-                  placeholder="Quantidade em ml"
-                />
-              </div>
-              
-              <div className="flex justify-end space-x-2 pt-4">
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  onClick={() => setIsDialogOpen(false)}
-                >
-                  {t('actions.cancel')}
+
+              <div className="flex justify-end space-x-2">
+                <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
+                  Cancelar
                 </Button>
                 <Button type="submit">
-                  {t('actions.save')}
+                  {editingInk ? 'Atualizar' : 'Criar'} Tinta
                 </Button>
               </div>
             </form>
@@ -251,172 +191,98 @@ export default function InksPage() {
         </Dialog>
       </div>
 
-      {/* Search */}
-      <div className="flex items-center space-x-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
-          <Input
-            placeholder={t('actions.search') + '...'}
-            value={search}
-            onChange={(e) => handleSearch(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-      </div>
-
-      {/* Plan Limit Warning */}
-      {!planLimits.canCreate && (
-        <Card className="border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950">
-          <CardContent className="pt-6">
-            <div className="flex items-center space-x-2">
-              <Badge variant="secondary" className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
-                Plano Gratuito
-              </Badge>
-              <span className="text-sm text-orange-700 dark:text-orange-300">
-                Limite de {planLimits.limit} tintas atingido. 
-                <Button variant="link" className="p-0 h-auto text-orange-700 dark:text-orange-300">
-                  Faça upgrade para Pro
-                </Button>
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Inks Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Palette className="w-5 h-5" />
-            <span>{t('inks.title')}</span>
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Lista de Tintas</CardTitle>
+            
+            <div className="relative">
+              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar tintas..."
+                value={search}
+                onChange={(e) => handleSearch(e.target.value)}
+                className="pl-8 w-64"
+              />
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
-              <p className="text-slate-600 dark:text-slate-400 mt-2">{t('common.loading')}</p>
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
             </div>
-          ) : inks.length === 0 ? (
+          ) : filteredInks.length === 0 ? (
             <div className="text-center py-8">
-              <Palette className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-              <p className="text-slate-600 dark:text-slate-400">{t('common.noData')}</p>
+              <Palette className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+              <h3 className="text-lg font-medium mb-2">Nenhuma tinta encontrada</h3>
+              <p className="text-muted-foreground mb-4">
+                {search ? 'Tente ajustar sua busca.' : 'Comece adicionando sua primeira tinta.'}
+              </p>
+              {!search && (
+                <Button onClick={() => handleOpenDialog()}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Adicionar Tinta
+                </Button>
+              )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('common.name')}</TableHead>
-                    <TableHead>{t('inks.costPerLiter')}</TableHead>
-                    <TableHead>{t('common.supplier')}</TableHead>
-                    <TableHead>{t('common.stock')}</TableHead>
-                    <TableHead>{t('common.created')}</TableHead>
-                    <TableHead className="text-right">Ações</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {inks.map((ink) => {
-                    const stockStatus = getStockStatus(ink);
-                    return (
-                      <TableRow key={ink.id}>
-                        <TableCell className="font-medium">
-                          <div className="flex items-center space-x-2">
-                            <div className="w-4 h-4 rounded-full bg-gradient-to-r from-purple-500 to-pink-500"></div>
-                            <span>{ink.nome}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>{formatCurrency(ink.custoPorLitro)}/L</TableCell>
-                        <TableCell>{ink.fornecedor || '-'}</TableCell>
-                        <TableCell>
-                          {ink.estoqueMl ? (
-                            <div className="flex items-center space-x-2">
-                              <div className="flex items-center space-x-1">
-                                <Droplets className="w-4 h-4 text-slate-400" />
-                                <span>{formatVolume(ink.estoqueMl)}</span>
-                              </div>
-                              {stockStatus && stockStatus.status === 'low' && (
-                                <AlertTriangle className="w-4 h-4 text-red-500" />
-                              )}
-                              {stockStatus && (
-                                <Badge className={stockStatus.color}>
-                                  {stockStatus.status === 'low' ? 'Baixo' : 
-                                   stockStatus.status === 'medium' ? 'Médio' : 'Bom'}
-                                </Badge>
-                              )}
-                            </div>
-                          ) : '-'}
-                        </TableCell>
-                        <TableCell>{formatDate(ink.createdAt)}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end space-x-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleOpenDialog(ink)}
-                            >
-                              <Edit className="w-4 h-4" />
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Nome</TableHead>
+                  <TableHead>Custo/Litro</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredInks.map((ink) => (
+                  <TableRow key={ink.id}>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <Palette className="h-4 w-4 text-muted-foreground" />
+                        {ink.name}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {formatCurrency(ink.cost_per_liter || 0, currency, locale)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end space-x-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleOpenDialog(ink)}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="outline" size="sm">
+                              <Trash2 className="h-4 w-4" />
                             </Button>
-                            
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700">
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    {t('inks.deleteConfirm')}
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>{t('actions.cancel')}</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    onClick={() => handleDelete(ink.id)}
-                                    className="bg-red-600 hover:bg-red-700"
-                                  >
-                                    {t('actions.delete')}
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-          
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between mt-4">
-              <p className="text-sm text-slate-600 dark:text-slate-400">
-                Página {page} de {totalPages}
-              </p>
-              <div className="flex space-x-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage(page - 1)}
-                  disabled={page === 1}
-                >
-                  {t('actions.previous')}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage(page + 1)}
-                  disabled={page === totalPages}
-                >
-                  {t('actions.next')}
-                </Button>
-              </div>
-            </div>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Tem certeza que deseja excluir a tinta "{ink.name}"? Esta ação não pode ser desfeita.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => handleDelete(ink.id)}>
+                                Excluir
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </CardContent>
       </Card>

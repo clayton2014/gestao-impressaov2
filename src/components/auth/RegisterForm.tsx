@@ -1,14 +1,13 @@
 "use client";
 import React, { useState } from "react";
-import { actions } from "@/lib/store";
-import { isValidEmail, isValidPhone, isValidPassword } from "@/lib/auth";
+import { signUp } from "@/lib/auth-client";
 
 interface RegisterFormProps {
   onSuccess?: () => void;
 }
 
 export default function RegisterForm({ onSuccess }: RegisterFormProps) {
-  const [form, setForm] = useState({ nome: "", email: "", telefone: "", senha: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", password: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,29 +16,35 @@ export default function RegisterForm({ onSuccess }: RegisterFormProps) {
     setError(null);
 
     // Validações básicas
-    if (!form.nome.trim()) {
+    if (!form.name.trim()) {
       setError("Nome é obrigatório");
       return;
     }
 
-    if (!isValidEmail(form.email)) {
+    if (!form.email.includes("@")) {
       setError("E-mail inválido");
       return;
     }
 
-    if (!isValidPhone(form.telefone)) {
+    const phoneDigits = form.phone.replace(/\D/g, "");
+    if (phoneDigits.length < 10 || phoneDigits.length > 12) {
       setError("Telefone deve ter entre 10 e 12 dígitos");
       return;
     }
 
-    if (!isValidPassword(form.senha)) {
+    if (form.password.length < 6) {
       setError("Senha deve ter pelo menos 6 caracteres");
       return;
     }
 
     setLoading(true);
     try {
-      await actions.registerUser(form);
+      await signUp({
+        name: form.name.trim(),
+        email: form.email.trim(),
+        phone: phoneDigits,
+        password: form.password
+      });
       onSuccess?.();
     } catch (err: any) {
       setError(err?.message ?? "Erro ao cadastrar");
@@ -57,8 +62,8 @@ export default function RegisterForm({ onSuccess }: RegisterFormProps) {
             required
             placeholder="Nome completo"
             className="input"
-            value={form.nome}
-            onChange={e => setForm({ ...form, nome: e.target.value })}
+            value={form.name}
+            onChange={e => setForm({ ...form, name: e.target.value })}
           />
         </div>
         <div>
@@ -76,8 +81,8 @@ export default function RegisterForm({ onSuccess }: RegisterFormProps) {
             required
             placeholder="Telefone (apenas números)"
             className="input"
-            value={form.telefone}
-            onChange={e => setForm({ ...form, telefone: e.target.value })}
+            value={form.phone}
+            onChange={e => setForm({ ...form, phone: e.target.value })}
           />
         </div>
         <div>
@@ -86,8 +91,8 @@ export default function RegisterForm({ onSuccess }: RegisterFormProps) {
             type="password"
             placeholder="Senha (mín. 6 caracteres)"
             className="input"
-            value={form.senha}
-            onChange={e => setForm({ ...form, senha: e.target.value })}
+            value={form.password}
+            onChange={e => setForm({ ...form, password: e.target.value })}
           />
         </div>
         {error && <p className="text-red-500 text-sm">{error}</p>}

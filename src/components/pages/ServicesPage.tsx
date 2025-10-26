@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -12,132 +11,71 @@ import { Badge } from '@/components/ui/badge'
 import { SafeSelect } from '@/components/ui/safe-select'
 import { Textarea } from '@/components/ui/textarea'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
-import { useForm, Controller, useFieldArray, useWatch } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { serviceOrderSchema, type ServiceOrderFormData } from '@/lib/validations'
-import { formatDate, getPlanLimits, getStatusColor, getStatusText, calculateServiceCosts, calculateServicePrice, generateUUID } from '@/lib/utils-app'
-import { Plus, Search, Edit, Trash2, FileText, Lock, Crown, X, Calculator, DollarSign } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, FileText, X, Calculator } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ServiceOrder, Client, Material, Ink } from '@/lib/types'
-import { 
-  getServiceOrders, 
-  createServiceOrder, 
-  updateServiceOrder, 
-  deleteServiceOrder,
-  getClients,
-  getMaterials,
-  getInks,
-  calculateServiceOrder
-} from '@/lib/database'
-import { toArr, low, str, num } from '@/lib/safe'
-import { ensureId, ensureNestedIds, uuid } from '@/lib/ids'
+import { ServicesDAO, ClientsDAO, MaterialsDAO, InksDAO } from '@/lib/dao'
 import { formatCurrency } from '@/hooks/useTranslation'
+import { useAppStore } from '@/lib/store'
+
+interface ServiceItem {
+  id?: string
+  material_id?: string
+  unit: 'm' | 'm2'
+  meters?: number
+  width?: number
+  height?: number
+  quantity: number
+  unit_cost_snapshot: number
+}
+
+interface ServiceInk {
+  id?: string
+  ink_id?: string
+  ml: number
+  cost_per_liter_snapshot: number
+}
+
+interface ServiceFormData {
+  client_id: string
+  name: string
+  description: string
+  status: string
+  due_date?: string
+  labor_hours?: number
+  labor_rate?: number
+  markup?: number
+  manual_price?: number
+  items: ServiceItem[]
+  inks: ServiceInk[]
+}
 
 export default function ServicesPage() {
-  const { user, currency, locale, settings } = useAppStore()
+  const { currency, locale } = useAppStore()
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingService, setEditingService] = useState<ServiceOrder | null>(null)
   const [loading, setLoading] = useState(true)
   
-  // Estados com arrays defensivos
-  const [rawServices, setRawServices] = useState<any>([])
-  const [rawClients, setRawClients] = useState<any>([])
-  const [rawMaterials, setRawMaterials] = useState<any>([])
-  const [rawInks, setRawInks] = useState<any>([])
+  const [services, setServices] = useState<ServiceOrder[]>([])
+  const [clients, setClients] = useState<Client[]>([])
+  const [materials, setMaterials] = useState<Material[]>([])
+  const [inks, setInks] = useState<Ink[]>([])
 
-  // Normalização defensiva dos dados com IDs garantidos
-  const services = toArr<ServiceOrder>(rawServices).map(ensureNestedIds)
-  const clients = toArr<Client>(rawClients).map(ensureId)
-  const materials = toArr<Material>(rawMaterials).map(ensureId)
-  const inks = toArr<Ink>(rawInks).map(ensureId)
-
-  const form = useForm<ServiceOrderFormData>({
-    resolver: zodResolver(serviceOrderSchema),
-    defaultValues: {
-      client_id: '',
-      name: '',
-      description: '',
-      status: 'quote',
-      delivery_date: '',
-      material_items: [],
-      ink_items: [],
-      labor_items: [],
-      extra_items: [],
-      discount_items: [],
-      markup_percentage: 0,
-      manual_price: null,
-    },
+  const [formData, setFormData] = useState<ServiceFormData>({
+    client_id: '',
+    name: '',
+    description: '',
+    status: 'Orçamento',
+    due_date: '',
+    labor_hours: 0,
+    labor_rate: 0,
+    markup: 0,
+    manual_price: undefined,
+    items: [],
+    inks: []
   })
-
-  const { fields: materialFields, append: appendMaterial, remove: removeMaterial } = useFieldArray({
-    control: form.control,
-    name: 'material_items',
-  })
-
-  const { fields: inkFields, append: appendInk, remove: removeInk } = useFieldArray({
-    control: form.control,
-    name: 'ink_items',
-  })
-
-  const { fields: laborFields, append: appendLabor, remove: removeLabor } = useFieldArray({
-    control: form.control,
-    name: 'labor_items',
-  })
-
-  const { fields: extraFields, append: appendExtra, remove: removeExtra } = useFieldArray({
-    control: form.control,
-    name: 'extra_items',
-  })
-
-  const { fields: discountFields, append: appendDiscount, remove: removeDiscount } = useFieldArray({
-    control: form.control,
-    name: 'discount_items',
-  })
-
-  // Watch for material changes to update snapshots
-  const watchedMaterials = useWatch({
-    control: form.control,
-    name: 'material_items'
-  })
-
-  const watchedInks = useWatch({
-    control: form.control,
-    name: 'ink_items'
-  })
-
-  // Update material snapshots when material selection changes
-  useEffect(() => {
-    const materialItems = toArr(watchedMaterials)
-    materialItems.forEach((item, index) => {
-      if (item.material_id) {
-        const material = materials.find(m => m.id === item.material_id)
-        if (material && item.cost_per_unit_snapshot !== material.custoPorUnidade) {
-          form.setValue(`material_items.${index}.cost_per_unit_snapshot`, material.custoPorUnidade, { shouldValidate: true, shouldDirty: true })
-          form.setValue(`material_items.${index}.material_name`, material.nome)
-          form.setValue(`material_items.${index}.unit`, material.unidade)
-        }
-      }
-    })
-  }, [watchedMaterials, materials, form])
-
-  // Update ink snapshots when ink selection changes
-  useEffect(() => {
-    const inkItems = toArr(watchedInks)
-    inkItems.forEach((item, index) => {
-      if (item.ink_id) {
-        const ink = inks.find(i => i.id === item.ink_id)
-        if (ink && item.cost_per_liter_snapshot !== ink.custoPorLitro) {
-          form.setValue(`ink_items.${index}.cost_per_liter_snapshot`, ink.custoPorLitro, { shouldValidate: true, shouldDirty: true })
-          form.setValue(`ink_items.${index}.ink_name`, ink.nome)
-        }
-      }
-    })
-  }, [watchedInks, inks, form])
-
-  const planLimits = getPlanLimits(user?.plan || 'free')
-  const canAddMore = services.length < planLimits.services
 
   useEffect(() => {
     loadData()
@@ -147,25 +85,19 @@ export default function ServicesPage() {
     try {
       setLoading(true)
       const [servicesData, clientsData, materialsData, inksData] = await Promise.all([
-        getServiceOrders(),
-        getClients(),
-        getMaterials(),
-        getInks()
+        ServicesDAO.list(),
+        ClientsDAO.list(),
+        MaterialsDAO.list(),
+        InksDAO.list()
       ])
       
-      // Armazenar dados brutos para normalização defensiva
-      setRawServices(servicesData)
-      setRawClients(clientsData)
-      setRawMaterials(materialsData)
-      setRawInks(inksData)
+      setServices(servicesData)
+      setClients(clientsData)
+      setMaterials(materialsData)
+      setInks(inksData)
     } catch (error) {
       console.error('Erro ao carregar dados:', error)
       toast.error('Erro ao carregar dados')
-      // Em caso de erro, garantir arrays vazios
-      setRawServices([])
-      setRawClients([])
-      setRawMaterials([])
-      setRawInks([])
     } finally {
       setLoading(false)
     }
@@ -174,45 +106,37 @@ export default function ServicesPage() {
   const getClientName = (clientId?: string) => {
     if (!clientId) return 'Cliente não encontrado'
     const client = clients.find(c => c.id === clientId)
-    return str(client?.nome) || 'Cliente não encontrado'
+    return client?.name || 'Cliente não encontrado'
   }
 
-  // Filtros seguros com useMemo
   const filteredServices = useMemo(() => {
-    const searchTermLower = low(searchTerm)
-    const statusFilterValue = str(statusFilter)
+    const searchTermLower = searchTerm.toLowerCase()
     
     return services.filter(service => {
-      const serviceName = low(service?.nome)
-      const clientName = low(getClientName(service?.clienteId))
+      const serviceName = service?.name?.toLowerCase() || ''
+      const clientName = getClientName(service?.client_id).toLowerCase()
       
       const matchesSearch = serviceName.includes(searchTermLower) || clientName.includes(searchTermLower)
-      const matchesStatus = statusFilterValue === 'all' || str(service?.status) === statusFilterValue
+      const matchesStatus = statusFilter === 'all' || service?.status === statusFilter
       
       return matchesSearch && matchesStatus
     })
   }, [services, searchTerm, statusFilter, clients])
 
   const handleNewService = () => {
-    if (!canAddMore) {
-      toast.error(`Limite de ${planLimits.services} serviços atingido. Faça upgrade para o plano Pro.`)
-      return
-    }
-    
     setEditingService(null)
-    form.reset({
+    setFormData({
       client_id: '',
       name: '',
       description: '',
-      status: 'quote',
-      delivery_date: '',
-      material_items: [],
-      ink_items: [],
-      labor_items: [],
-      extra_items: [],
-      discount_items: [],
-      markup_percentage: 0,
-      manual_price: null,
+      status: 'Orçamento',
+      due_date: '',
+      labor_hours: 0,
+      labor_rate: 0,
+      markup: 0,
+      manual_price: undefined,
+      items: [],
+      inks: []
     })
     setIsDialogOpen(true)
   }
@@ -220,120 +144,55 @@ export default function ServicesPage() {
   const handleEditService = (service: ServiceOrder) => {
     setEditingService(service)
     
-    // Normalização defensiva dos itens do serviço
-    const serviceItems = toArr(service.itens)
-    const serviceExtras = toArr(service.extras)
-    const serviceDiscounts = toArr(service.descontos)
-    
-    form.reset({
-      client_id: str(service.clienteId),
-      name: str(service.nome),
-      description: str(service.descricao),
-      status: str(service.status),
-      delivery_date: service.dataEntrega ? new Date(service.dataEntrega).toISOString().split('T')[0] : '',
-      material_items: serviceItems.filter(item => item.tipo === 'material').map(item => ({
-        id: str(item.id) || uuid(),
-        material_id: str(item.materialId),
-        material_name: str(item.nome),
-        unit: str(item.unidade),
-        meters: num(item.metros, 0),
-        width: num(item.largura, 0),
-        height: num(item.altura, 0),
-        quantity: num(item.quantidade, 1),
-        cost_per_unit_snapshot: num(item.custoPorUnidadeSnapshot, 0),
-      })),
-      ink_items: serviceItems.filter(item => item.tipo === 'tinta').map(item => ({
-        id: str(item.id) || uuid(),
-        ink_id: str(item.tintaId),
-        ink_name: str(item.nome),
-        ml_used: num(item.mlUsados, 0),
-        cost_per_liter_snapshot: num(item.custoPorLitroSnapshot, 0),
-      })),
-      labor_items: serviceItems.filter(item => item.tipo === 'maoDeObra').map(item => ({
-        id: str(item.id) || uuid(),
-        description: str(item.nome),
-        hours: num(item.horas, 0),
-        hourly_rate: num(item.valorPorHora, 0),
-      })),
-      extra_items: serviceExtras.map(extra => ({
-        id: str(extra.id) || uuid(),
-        description: str(extra.descricao),
-        value: num(extra.valor, 0),
-      })),
-      discount_items: serviceDiscounts.map(discount => ({
-        id: str(discount.id) || uuid(),
-        description: str(discount.descricao),
-        value: num(discount.valor, 0),
-      })),
-      markup_percentage: num(service.margemLucro, 0),
-      manual_price: service.precoManual ? num(service.precoManual) : null,
+    setFormData({
+      client_id: service.client_id || '',
+      name: service.name || '',
+      description: service.description || '',
+      status: service.status || 'Orçamento',
+      due_date: service.due_date ? new Date(service.due_date).toISOString().split('T')[0] : '',
+      labor_hours: service.labor_hours || 0,
+      labor_rate: service.labor_rate || 0,
+      markup: service.markup || 0,
+      manual_price: service.manual_price || undefined,
+      items: service.items || [],
+      inks: service.inks || []
     })
     setIsDialogOpen(true)
   }
 
-  const onSubmit = async (data: ServiceOrderFormData) => {
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (!formData.name.trim()) {
+      toast.error('Nome do serviço é obrigatório')
+      return
+    }
+
+    if (!formData.client_id) {
+      toast.error('Cliente é obrigatório')
+      return
+    }
+
     try {
       const serviceData = {
-        id: editingService?.id || uuid(),
-        clienteId: data.client_id,
-        nome: data.name,
-        descricao: data.description,
-        status: data.status,
-        dataEntrega: data.delivery_date ? new Date(data.delivery_date) : null,
-        itens: [
-          ...toArr(data.material_items).map(item => ({
-            id: item.id || uuid(),
-            tipo: 'material' as const,
-            materialId: item.material_id,
-            nome: item.material_name,
-            unidade: item.unit,
-            metros: item.unit === 'm' ? item.meters : undefined,
-            largura: item.unit === 'm2' ? item.width : undefined,
-            altura: item.unit === 'm2' ? item.height : undefined,
-            quantidade: item.unit === 'm2' ? item.quantity : 1,
-            custoPorUnidadeSnapshot: item.cost_per_unit_snapshot,
-          })),
-          ...toArr(data.ink_items).map(item => ({
-            id: item.id || uuid(),
-            tipo: 'tinta' as const,
-            tintaId: item.ink_id,
-            nome: item.ink_name,
-            mlUsados: item.ml_used,
-            custoPorLitroSnapshot: item.cost_per_liter_snapshot,
-          })),
-          ...toArr(data.labor_items).map(item => ({
-            id: item.id || uuid(),
-            tipo: 'maoDeObra' as const,
-            nome: item.description,
-            horas: item.hours,
-            valorPorHora: item.hourly_rate,
-          })),
-        ],
-        extras: toArr(data.extra_items).map(item => ({
-          id: item.id || uuid(),
-          descricao: item.description,
-          valor: item.value,
-        })),
-        descontos: toArr(data.discount_items).map(item => ({
-          id: item.id || uuid(),
-          descricao: item.description,
-          valor: item.value,
-        })),
-        margemLucro: data.markup_percentage,
-        precoManual: data.manual_price,
-        createdAt: editingService?.createdAt || new Date(),
-        updatedAt: new Date(),
+        client_id: formData.client_id,
+        name: formData.name.trim(),
+        description: formData.description.trim(),
+        status: formData.status,
+        due_date: formData.due_date ? new Date(formData.due_date) : null,
+        labor_hours: formData.labor_hours,
+        labor_rate: formData.labor_rate,
+        markup: formData.markup,
+        manual_price: formData.manual_price,
+        items: formData.items,
+        inks: formData.inks
       }
 
-      // Calculate costs and price
-      const calculated = calculateServiceOrder(serviceData)
-      const finalService = { ...serviceData, calc: calculated }
-
       if (editingService) {
-        await updateServiceOrder(finalService)
+        await ServicesDAO.update(editingService.id, serviceData)
         toast.success('Serviço atualizado com sucesso!')
       } else {
-        await createServiceOrder(finalService)
+        await ServicesDAO.create(serviceData)
         toast.success('Serviço criado com sucesso!')
       }
 
@@ -347,7 +206,7 @@ export default function ServicesPage() {
 
   const handleDeleteService = async (id: string) => {
     try {
-      await deleteServiceOrder(id)
+      await ServicesDAO.remove(id)
       toast.success('Serviço excluído com sucesso!')
       loadData()
     } catch (error) {
@@ -357,52 +216,94 @@ export default function ServicesPage() {
   }
 
   const addMaterialItem = () => {
-    appendMaterial({
-      id: uuid(),
-      material_id: '',
-      material_name: '',
-      unit: 'm',
-      meters: 0,
-      width: 0,
-      height: 0,
-      quantity: 1,
-      cost_per_unit_snapshot: 0,
-    })
+    setFormData(prev => ({
+      ...prev,
+      items: [...prev.items, {
+        material_id: '',
+        unit: 'm2',
+        meters: 0,
+        width: 0,
+        height: 0,
+        quantity: 1,
+        unit_cost_snapshot: 0
+      }]
+    }))
   }
 
   const addInkItem = () => {
-    appendInk({
-      id: uuid(),
-      ink_id: '',
-      ink_name: '',
-      ml_used: 0,
-      cost_per_liter_snapshot: 0,
-    })
+    setFormData(prev => ({
+      ...prev,
+      inks: [...prev.inks, {
+        ink_id: '',
+        ml: 0,
+        cost_per_liter_snapshot: 0
+      }]
+    }))
   }
 
-  const addLaborItem = () => {
-    appendLabor({
-      id: uuid(),
-      description: '',
-      hours: 0,
-      hourly_rate: 0,
-    })
+  const removeMaterialItem = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== index)
+    }))
   }
 
-  const addExtra = () => {
-    appendExtra({
-      id: uuid(),
-      description: '',
-      value: 0,
-    })
+  const removeInkItem = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      inks: prev.inks.filter((_, i) => i !== index)
+    }))
   }
 
-  const addDiscount = () => {
-    appendDiscount({
-      id: uuid(),
-      description: '',
-      value: 0,
-    })
+  const updateMaterialItem = (index: number, field: string, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      items: prev.items.map((item, i) => 
+        i === index ? { ...item, [field]: value } : item
+      )
+    }))
+
+    // Auto-update cost snapshot when material changes
+    if (field === 'material_id') {
+      const material = materials.find(m => m.id === value)
+      if (material) {
+        setFormData(prev => ({
+          ...prev,
+          items: prev.items.map((item, i) => 
+            i === index ? { 
+              ...item, 
+              unit_cost_snapshot: material.cost_per_unit || 0,
+              unit: material.unit
+            } : item
+          )
+        }))
+      }
+    }
+  }
+
+  const updateInkItem = (index: number, field: string, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      inks: prev.inks.map((ink, i) => 
+        i === index ? { ...ink, [field]: value } : ink
+      )
+    }))
+
+    // Auto-update cost snapshot when ink changes
+    if (field === 'ink_id') {
+      const ink = inks.find(i => i.id === value)
+      if (ink) {
+        setFormData(prev => ({
+          ...prev,
+          inks: prev.inks.map((inkItem, i) => 
+            i === index ? { 
+              ...inkItem, 
+              cost_per_liter_snapshot: ink.cost_per_liter || 0
+            } : inkItem
+          )
+        }))
+      }
+    }
   }
 
   return (
@@ -411,7 +312,7 @@ export default function ServicesPage() {
         <div>
           <h1 className="text-3xl font-bold">Serviços</h1>
           <p className="text-muted-foreground">
-            Gerencie seus serviços ({services.length}/{planLimits.services === Infinity ? '∞' : planLimits.services})
+            Gerencie seus serviços ({services.length})
           </p>
         </div>
         
@@ -432,28 +333,17 @@ export default function ServicesPage() {
               </DialogDescription>
             </DialogHeader>
             
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+            <form onSubmit={onSubmit} className="space-y-6">
               {/* Basic Info */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="client_id">Cliente *</Label>
-                  <Controller
-                    name="client_id"
-                    control={form.control}
-                    render={({ field }) => (
-                      <SafeSelect
-                        value={field.value ?? ""}
-                        onChange={field.onChange}
-                        placeholder="Selecione o cliente"
-                        options={clients.map(client => ({ value: client.id, label: client.nome }))}
-                      />
-                    )}
+                  <SafeSelect
+                    value={formData.client_id}
+                    onChange={(value) => setFormData(prev => ({ ...prev, client_id: value }))}
+                    placeholder="Selecione o cliente"
+                    options={clients.map(client => ({ value: client.id, label: client.name }))}
                   />
-                  {form.formState.errors.client_id && (
-                    <p className="text-sm text-red-500">
-                      {form.formState.errors.client_id.message}
-                    </p>
-                  )}
                 </div>
                 
                 <div className="space-y-2">
@@ -461,44 +351,35 @@ export default function ServicesPage() {
                   <Input
                     id="name"
                     placeholder="Nome do serviço"
-                    {...form.register('name')}
+                    value={formData.name}
+                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                   />
-                  {form.formState.errors.name && (
-                    <p className="text-sm text-red-500">
-                      {form.formState.errors.name.message}
-                    </p>
-                  )}
                 </div>
               </div>
 
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="status">Status</Label>
-                  <Controller
-                    name="status"
-                    control={form.control}
-                    render={({ field }) => (
-                      <SafeSelect
-                        value={field.value ?? ""}
-                        onChange={field.onChange}
-                        placeholder="Selecione o status"
-                        options={[
-                          { value: "quote", label: "Orçamento" },
-                          { value: "approved", label: "Aprovado" },
-                          { value: "production", label: "Em Produção" },
-                          { value: "completed", label: "Concluído" }
-                        ]}
-                      />
-                    )}
+                  <SafeSelect
+                    value={formData.status}
+                    onChange={(value) => setFormData(prev => ({ ...prev, status: value }))}
+                    placeholder="Selecione o status"
+                    options={[
+                      { value: "Orçamento", label: "Orçamento" },
+                      { value: "Aprovado", label: "Aprovado" },
+                      { value: "Em produção", label: "Em Produção" },
+                      { value: "Concluído", label: "Concluído" }
+                    ]}
                   />
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="delivery_date">Data de Entrega</Label>
+                  <Label htmlFor="due_date">Data de Entrega</Label>
                   <Input
-                    id="delivery_date"
+                    id="due_date"
                     type="date"
-                    {...form.register('delivery_date')}
+                    value={formData.due_date}
+                    onChange={(e) => setFormData(prev => ({ ...prev, due_date: e.target.value }))}
                   />
                 </div>
                 
@@ -507,7 +388,8 @@ export default function ServicesPage() {
                   <Input
                     id="description"
                     placeholder="Descrição do serviço"
-                    {...form.register('description')}
+                    value={formData.description}
+                    onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
                   />
                 </div>
               </div>
@@ -524,29 +406,23 @@ export default function ServicesPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {materialFields.map((field, index) => (
-                    <div key={field.id} className="grid grid-cols-6 gap-2 items-end p-3 border rounded-lg">
+                  {formData.items.map((item, index) => (
+                    <div key={index} className="grid grid-cols-6 gap-2 items-end p-3 border rounded-lg">
                       <div className="space-y-1">
                         <Label className="text-xs">Material</Label>
-                        <Controller
-                          name={`material_items.${index}.material_id`}
-                          control={form.control}
-                          render={({ field }) => (
-                            <SafeSelect
-                              value={field.value ?? ""}
-                              onChange={field.onChange}
-                              placeholder="Selecionar"
-                              options={materials.map(material => ({ 
-                                value: material.id, 
-                                label: `${material.nome} (${material.unidade})` 
-                              }))}
-                              className="h-8"
-                            />
-                          )}
+                        <SafeSelect
+                          value={item.material_id || ''}
+                          onChange={(value) => updateMaterialItem(index, 'material_id', value)}
+                          placeholder="Selecionar"
+                          options={materials.map(material => ({ 
+                            value: material.id, 
+                            label: `${material.name} (${material.unit})` 
+                          }))}
+                          className="h-8"
                         />
                       </div>
 
-                      {form.watch(`material_items.${index}.unit`) === 'm' ? (
+                      {item.unit === 'm' ? (
                         <div className="space-y-1">
                           <Label className="text-xs">Metros</Label>
                           <Input
@@ -554,7 +430,8 @@ export default function ServicesPage() {
                             step="0.01"
                             min="0"
                             className="h-8"
-                            {...form.register(`material_items.${index}.meters`, { valueAsNumber: true })}
+                            value={item.meters || 0}
+                            onChange={(e) => updateMaterialItem(index, 'meters', Number(e.target.value))}
                           />
                         </div>
                       ) : (
@@ -566,7 +443,8 @@ export default function ServicesPage() {
                               step="0.01"
                               min="0"
                               className="h-8"
-                              {...form.register(`material_items.${index}.width`, { valueAsNumber: true })}
+                              value={item.width || 0}
+                              onChange={(e) => updateMaterialItem(index, 'width', Number(e.target.value))}
                             />
                           </div>
                           <div className="space-y-1">
@@ -576,7 +454,8 @@ export default function ServicesPage() {
                               step="0.01"
                               min="0"
                               className="h-8"
-                              {...form.register(`material_items.${index}.height`, { valueAsNumber: true })}
+                              value={item.height || 0}
+                              onChange={(e) => updateMaterialItem(index, 'height', Number(e.target.value))}
                             />
                           </div>
                           <div className="space-y-1">
@@ -585,7 +464,8 @@ export default function ServicesPage() {
                               type="number"
                               min="1"
                               className="h-8"
-                              {...form.register(`material_items.${index}.quantity`, { valueAsNumber: true })}
+                              value={item.quantity || 1}
+                              onChange={(e) => updateMaterialItem(index, 'quantity', Number(e.target.value))}
                             />
                           </div>
                         </>
@@ -598,7 +478,8 @@ export default function ServicesPage() {
                           step="0.01"
                           min="0"
                           className="h-8"
-                          {...form.register(`material_items.${index}.cost_per_unit_snapshot`, { valueAsNumber: true })}
+                          value={item.unit_cost_snapshot || 0}
+                          onChange={(e) => updateMaterialItem(index, 'unit_cost_snapshot', Number(e.target.value))}
                         />
                       </div>
 
@@ -607,7 +488,7 @@ export default function ServicesPage() {
                         variant="outline"
                         size="sm"
                         className="h-8"
-                        onClick={() => removeMaterial(index)}
+                        onClick={() => removeMaterialItem(index)}
                       >
                         <X className="h-4 w-4" />
                       </Button>
@@ -628,22 +509,16 @@ export default function ServicesPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {inkFields.map((field, index) => (
-                    <div key={field.id} className="grid grid-cols-4 gap-2 items-end p-3 border rounded-lg">
+                  {formData.inks.map((ink, index) => (
+                    <div key={index} className="grid grid-cols-4 gap-2 items-end p-3 border rounded-lg">
                       <div className="space-y-1">
                         <Label className="text-xs">Tinta</Label>
-                        <Controller
-                          name={`ink_items.${index}.ink_id`}
-                          control={form.control}
-                          render={({ field }) => (
-                            <SafeSelect
-                              value={field.value ?? ""}
-                              onChange={field.onChange}
-                              placeholder="Selecionar"
-                              options={inks.map(ink => ({ value: ink.id, label: ink.nome }))}
-                              className="h-8"
-                            />
-                          )}
+                        <SafeSelect
+                          value={ink.ink_id || ''}
+                          onChange={(value) => updateInkItem(index, 'ink_id', value)}
+                          placeholder="Selecionar"
+                          options={inks.map(inkItem => ({ value: inkItem.id, label: inkItem.name }))}
+                          className="h-8"
                         />
                       </div>
 
@@ -653,7 +528,8 @@ export default function ServicesPage() {
                           type="number"
                           min="0"
                           className="h-8"
-                          {...form.register(`ink_items.${index}.ml_used`, { valueAsNumber: true })}
+                          value={ink.ml || 0}
+                          onChange={(e) => updateInkItem(index, 'ml', Number(e.target.value))}
                         />
                       </div>
 
@@ -664,7 +540,8 @@ export default function ServicesPage() {
                           step="0.01"
                           min="0"
                           className="h-8"
-                          {...form.register(`ink_items.${index}.cost_per_liter_snapshot`, { valueAsNumber: true })}
+                          value={ink.cost_per_liter_snapshot || 0}
+                          onChange={(e) => updateInkItem(index, 'cost_per_liter_snapshot', Number(e.target.value))}
                         />
                       </div>
 
@@ -673,7 +550,7 @@ export default function ServicesPage() {
                         variant="outline"
                         size="sm"
                         className="h-8"
-                        onClick={() => removeInk(index)}
+                        onClick={() => removeInkItem(index)}
                       >
                         <X className="h-4 w-4" />
                       </Button>
@@ -681,158 +558,6 @@ export default function ServicesPage() {
                   ))}
                 </CardContent>
               </Card>
-
-              {/* Labor */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg">Mão de Obra</CardTitle>
-                    <Button type="button" variant="outline" size="sm" onClick={addLaborItem}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Adicionar Mão de Obra
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {laborFields.map((field, index) => (
-                    <div key={field.id} className="grid grid-cols-4 gap-2 items-end p-3 border rounded-lg">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Descrição</Label>
-                        <Input
-                          placeholder="Ex: Impressão, Instalação"
-                          className="h-8"
-                          {...form.register(`labor_items.${index}.description`)}
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <Label className="text-xs">Horas</Label>
-                        <Input
-                          type="number"
-                          step="0.5"
-                          min="0"
-                          className="h-8"
-                          {...form.register(`labor_items.${index}.hours`, { valueAsNumber: true })}
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <Label className="text-xs">Valor/Hora</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          className="h-8"
-                          {...form.register(`labor_items.${index}.hourly_rate`, { valueAsNumber: true })}
-                        />
-                      </div>
-
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8"
-                        onClick={() => removeLabor(index)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              {/* Extras and Discounts */}
-              <div className="grid grid-cols-2 gap-4">
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg">Extras</CardTitle>
-                      <Button type="button" variant="outline" size="sm" onClick={addExtra}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Adicionar
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {extraFields.map((field, index) => (
-                      <div key={field.id} className="grid grid-cols-3 gap-2 items-end">
-                        <div className="space-y-1">
-                          <Label className="text-xs">Descrição</Label>
-                          <Input
-                            placeholder="Ex: Frete"
-                            className="h-8"
-                            {...form.register(`extra_items.${index}.description`)}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Valor</Label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            className="h-8"
-                            {...form.register(`extra_items.${index}.value`, { valueAsNumber: true })}
-                          />
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8"
-                          onClick={() => removeExtra(index)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg">Descontos</CardTitle>
-                      <Button type="button" variant="outline" size="sm" onClick={addDiscount}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Adicionar
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {discountFields.map((field, index) => (
-                      <div key={field.id} className="grid grid-cols-3 gap-2 items-end">
-                        <div className="space-y-1">
-                          <Label className="text-xs">Descrição</Label>
-                          <Input
-                            placeholder="Ex: Desconto cliente"
-                            className="h-8"
-                            {...form.register(`discount_items.${index}.description`)}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Valor</Label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            className="h-8"
-                            {...form.register(`discount_items.${index}.value`, { valueAsNumber: true })}
-                          />
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8"
-                          onClick={() => removeDiscount(index)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              </div>
 
               {/* Pricing */}
               <Card>
@@ -845,14 +570,41 @@ export default function ServicesPage() {
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="markup_percentage">Margem de Lucro (%)</Label>
+                      <Label htmlFor="labor_hours">Horas de Trabalho</Label>
                       <Input
-                        id="markup_percentage"
+                        id="labor_hours"
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        value={formData.labor_hours || 0}
+                        onChange={(e) => setFormData(prev => ({ ...prev, labor_hours: Number(e.target.value) }))}
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="labor_rate">Valor por Hora</Label>
+                      <Input
+                        id="labor_rate"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={formData.labor_rate || 0}
+                        onChange={(e) => setFormData(prev => ({ ...prev, labor_rate: Number(e.target.value) }))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="markup">Margem de Lucro (%)</Label>
+                      <Input
+                        id="markup"
                         type="number"
                         step="0.1"
                         min="0"
                         max="1000"
-                        {...form.register('markup_percentage', { valueAsNumber: true })}
+                        value={formData.markup || 0}
+                        onChange={(e) => setFormData(prev => ({ ...prev, markup: Number(e.target.value) }))}
                       />
                     </div>
                     
@@ -864,7 +616,8 @@ export default function ServicesPage() {
                         step="0.01"
                         min="0"
                         placeholder="Deixe vazio para cálculo automático"
-                        {...form.register('manual_price', { valueAsNumber: true })}
+                        value={formData.manual_price || ''}
+                        onChange={(e) => setFormData(prev => ({ ...prev, manual_price: e.target.value ? Number(e.target.value) : undefined }))}
                       />
                     </div>
                   </div>
@@ -883,25 +636,6 @@ export default function ServicesPage() {
           </DialogContent>
         </Dialog>
       </div>
-
-      {/* Plan Limit Warning */}
-      {!canAddMore && (
-        <Card className="border-amber-500/20 bg-amber-500/5">
-          <CardContent className="flex items-center gap-3 p-4">
-            <Lock className="h-5 w-5 text-amber-500" />
-            <div className="flex-1">
-              <p className="font-medium text-amber-500">Limite de serviços atingido</p>
-              <p className="text-sm text-muted-foreground">
-                Você atingiu o limite de {planLimits.services} serviços do plano gratuito.
-              </p>
-            </div>
-            <Button variant="outline" size="sm" className="border-amber-500/20 text-amber-500 hover:bg-amber-500/10">
-              <Crown className="mr-2 h-4 w-4" />
-              Upgrade Pro
-            </Button>
-          </CardContent>
-        </Card>
-      )}
 
       <Card>
         <CardHeader>
@@ -951,7 +685,7 @@ export default function ServicesPage() {
               <p className="text-muted-foreground mb-4">
                 {searchTerm || statusFilter !== 'all' ? 'Tente ajustar seus filtros.' : 'Comece adicionando seu primeiro serviço.'}
               </p>
-              {!searchTerm && statusFilter === 'all' && canAddMore && (
+              {!searchTerm && statusFilter === 'all' && (
                 <Button onClick={handleNewService}>
                   <Plus className="mr-2 h-4 w-4" />
                   Adicionar Serviço
@@ -966,10 +700,6 @@ export default function ServicesPage() {
                   <TableHead>Serviço</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Entrega</TableHead>
-                  <TableHead>Custo</TableHead>
-                  <TableHead>Preço</TableHead>
-                  <TableHead>Lucro</TableHead>
-                  <TableHead>Margem</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
@@ -977,56 +707,25 @@ export default function ServicesPage() {
                 {filteredServices.map((service) => (
                   <TableRow key={service.id}>
                     <TableCell className="font-medium">
-                      {getClientName(service.clienteId)}
+                      {getClientName(service.client_id)}
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1">
-                        <div>{str(service.nome)}</div>
-                        {/* Materiais do serviço com keys únicas */}
-                        {toArr(service.itens).filter(item => item.tipo === 'material').length > 0 && (
+                        <div>{service.name}</div>
+                        {service.description && (
                           <div className="text-xs text-muted-foreground">
-                            Materiais: {toArr(service.itens)
-                              .filter(item => item.tipo === 'material')
-                              .map((item, idx) => (
-                                <span key={`material-${service.id}-${item.id || idx}`}>
-                                  {str(item.nome)}{idx < toArr(service.itens).filter(i => i.tipo === 'material').length - 1 ? ', ' : ''}
-                                </span>
-                              ))}
-                          </div>
-                        )}
-                        {/* Tintas do serviço com keys únicas */}
-                        {toArr(service.itens).filter(item => item.tipo === 'tinta').length > 0 && (
-                          <div className="text-xs text-muted-foreground">
-                            Tintas: {toArr(service.itens)
-                              .filter(item => item.tipo === 'tinta')
-                              .map((item, idx) => (
-                                <span key={`ink-${service.id}-${item.id || idx}`}>
-                                  {str(item.nome)}{idx < toArr(service.itens).filter(i => i.tipo === 'tinta').length - 1 ? ', ' : ''}
-                                </span>
-                              ))}
+                            {service.description}
                           </div>
                         )}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge className={getStatusColor(service.status)}>
-                        {getStatusText(service.status, locale)}
+                      <Badge variant={service.status === 'Concluído' ? 'default' : 'secondary'}>
+                        {service.status}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      {service.dataEntrega ? formatDate(service.dataEntrega, locale) : '-'}
-                    </TableCell>
-                    <TableCell>
-                      {formatCurrency(num(service.calc?.custo, 0), currency, locale)}
-                    </TableCell>
-                    <TableCell>
-                      {formatCurrency(num(service.calc?.preco, 0), currency, locale)}
-                    </TableCell>
-                    <TableCell>
-                      {formatCurrency(num(service.calc?.lucro, 0), currency, locale)}
-                    </TableCell>
-                    <TableCell>
-                      {(num(service.calc?.margem, 0) * 100).toFixed(1)}%
+                      {service.due_date ? new Date(service.due_date).toLocaleDateString() : '-'}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end space-x-2">
@@ -1047,7 +746,7 @@ export default function ServicesPage() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
                               <AlertDialogDescription>
-                                Tem certeza que deseja excluir o serviço "{str(service.nome)}"? Esta ação não pode ser desfeita.
+                                Tem certeza que deseja excluir o serviço "{service.name}"? Esta ação não pode ser desfeita.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>

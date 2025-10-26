@@ -12,80 +12,54 @@ import { Label } from '@/components/ui/label';
 import { SafeSelect } from '@/components/ui/safe-select';
 import { Plus, Search, Edit, Trash2, Package, Ruler, AlertTriangle } from 'lucide-react';
 import { useTranslation, formatCurrency } from '@/hooks/useTranslation';
-import { getMaterials, createMaterial, updateMaterial, deleteMaterial, checkPlanLimits } from '@/lib/database';
+import { MaterialsDAO } from '@/lib/dao';
 import type { Material } from '@/lib/types';
 import { toast } from 'sonner';
-import { toArr, str, num } from '@/lib/safe';
-import { ensureId, uuid } from '@/lib/ids';
 import { useAppStore } from '@/lib/store';
 
 export default function MaterialsPage() {
   const { t, formatDate } = useTranslation();
   const { currency, locale } = useAppStore();
-  const [rawMaterials, setRawMaterials] = useState<any>([]);
+  const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [unitFilter, setUnitFilter] = useState('');
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
-  const [planLimits, setPlanLimits] = useState({ canCreate: true, limit: 0, current: 0 });
-
-  // Normalização defensiva dos dados com IDs garantidos
-  const materials = toArr<Material>(rawMaterials).map(ensureId);
 
   // Form state
   const [formData, setFormData] = useState({
-    nome: '',
-    unidade: 'm2' as 'm' | 'm2',
-    custoPorUnidade: '',
-    fornecedor: '',
-    estoque: ''
+    name: '',
+    unit: 'm2' as 'm' | 'm2',
+    cost_per_unit: '',
   });
 
   const loadMaterials = async () => {
     setLoading(true);
     try {
-      const result = await getMaterials(page, 10, search);
-      setRawMaterials(result.data || []);
-      setTotalPages(result.totalPages || 1);
+      const data = await MaterialsDAO.list();
+      setMaterials(data);
     } catch (error) {
       console.error('Error loading materials:', error);
-      setRawMaterials([]);
-      setTotalPages(1);
+      toast.error('Erro ao carregar materiais');
     } finally {
       setLoading(false);
     }
   };
 
-  const loadPlanLimits = async () => {
-    try {
-      const limits = await checkPlanLimits('materials');
-      setPlanLimits(limits);
-    } catch (error) {
-      console.error('Error loading plan limits:', error);
-      setPlanLimits({ canCreate: true, limit: 0, current: 0 });
-    }
-  };
-
   useEffect(() => {
     loadMaterials();
-    loadPlanLimits();
-  }, [page, search]);
+  }, []);
 
   const handleSearch = (value: string) => {
     setSearch(value);
-    setPage(1);
   };
 
   const resetForm = () => {
     setFormData({
-      nome: '',
-      unidade: 'm2',
-      custoPorUnidade: '',
-      fornecedor: '',
-      estoque: ''
+      name: '',
+      unit: 'm2',
+      cost_per_unit: '',
     });
     setEditingMaterial(null);
   };
@@ -94,11 +68,9 @@ export default function MaterialsPage() {
     if (material) {
       setEditingMaterial(material);
       setFormData({
-        nome: str(material.nome),
-        unidade: material.unidade,
-        custoPorUnidade: num(material.custoPorUnidade, 0).toString(),
-        fornecedor: str(material.fornecedor),
-        estoque: num(material.estoque, 0).toString()
+        name: material.name || '',
+        unit: material.unit,
+        cost_per_unit: material.cost_per_unit?.toString() || '',
       });
     } else {
       resetForm();
@@ -109,67 +81,55 @@ export default function MaterialsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.nome.trim()) {
+    if (!formData.name.trim()) {
       toast.error('Nome é obrigatório');
       return;
     }
 
-    if (!formData.custoPorUnidade || isNaN(Number(formData.custoPorUnidade))) {
+    if (!formData.cost_per_unit || isNaN(Number(formData.cost_per_unit))) {
       toast.error('Custo por unidade deve ser um número válido');
       return;
     }
 
     try {
       const materialData = {
-        id: editingMaterial?.id || uuid(),
-        nome: formData.nome.trim(),
-        unidade: formData.unidade,
-        custoPorUnidade: Number(formData.custoPorUnidade),
-        fornecedor: formData.fornecedor.trim(),
-        estoque: formData.estoque ? Number(formData.estoque) : 0,
-        createdAt: editingMaterial?.createdAt || new Date(),
-        updatedAt: new Date()
+        name: formData.name.trim(),
+        unit: formData.unit,
+        cost_per_unit: Number(formData.cost_per_unit),
       };
 
       if (editingMaterial) {
-        await updateMaterial(materialData);
+        await MaterialsDAO.update(editingMaterial.id, materialData);
         toast.success('Material atualizado com sucesso!');
       } else {
-        if (!planLimits.canCreate) {
-          toast.error(`Limite de ${planLimits.limit} materiais atingido. Faça upgrade para o plano Pro.`);
-          return;
-        }
-        await createMaterial(materialData);
+        await MaterialsDAO.create(materialData);
         toast.success('Material criado com sucesso!');
       }
 
       setIsDialogOpen(false);
       resetForm();
       loadMaterials();
-      loadPlanLimits();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving material:', error);
-      toast.error('Erro ao salvar material');
+      toast.error(error.message || 'Erro ao salvar material');
     }
   };
 
   const handleDelete = async (id: string) => {
     try {
-      await deleteMaterial(id);
+      await MaterialsDAO.remove(id);
       toast.success('Material excluído com sucesso!');
       loadMaterials();
-      loadPlanLimits();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error deleting material:', error);
-      toast.error('Erro ao excluir material');
+      toast.error(error.message || 'Erro ao excluir material');
     }
   };
 
-  // Filtros seguros
+  // Filter materials
   const filteredMaterials = materials.filter(material => {
-    const matchesSearch = str(material.nome).toLowerCase().includes(search.toLowerCase()) ||
-                         str(material.fornecedor).toLowerCase().includes(search.toLowerCase());
-    const matchesUnit = !unitFilter || material.unidade === unitFilter;
+    const matchesSearch = material.name?.toLowerCase().includes(search.toLowerCase());
+    const matchesUnit = !unitFilter || material.unit === unitFilter;
     return matchesSearch && matchesUnit;
   });
 
@@ -179,7 +139,7 @@ export default function MaterialsPage() {
         <div>
           <h1 className="text-3xl font-bold">Materiais</h1>
           <p className="text-muted-foreground">
-            Gerencie seus materiais ({materials.length}/{planLimits.limit === 0 ? '∞' : planLimits.limit})
+            Gerencie seus materiais ({materials.length})
           </p>
         </div>
         
@@ -188,7 +148,6 @@ export default function MaterialsPage() {
             <Button 
               onClick={() => handleOpenDialog()}
               className="bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-600 hover:to-cyan-600"
-              disabled={!planLimits.canCreate}
             >
               <Plus className="mr-2 h-4 w-4" />
               Novo Material
@@ -204,21 +163,21 @@ export default function MaterialsPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="nome">Nome *</Label>
+                  <Label htmlFor="name">Nome *</Label>
                   <Input
-                    id="nome"
-                    value={formData.nome}
-                    onChange={(e) => setFormData(prev => ({ ...prev, nome: e.target.value }))}
+                    id="name"
+                    value={formData.name}
+                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                     placeholder="Nome do material"
                     required
                   />
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="unidade">Unidade *</Label>
+                  <Label htmlFor="unit">Unidade *</Label>
                   <SafeSelect
-                    value={formData.unidade}
-                    onChange={(value) => setFormData(prev => ({ ...prev, unidade: value as 'm' | 'm2' }))}
+                    value={formData.unit}
+                    onChange={(value) => setFormData(prev => ({ ...prev, unit: value as 'm' | 'm2' }))}
                     options={[
                       { value: 'm', label: 'm (metro linear)' },
                       { value: 'm2', label: 'm² (metro quadrado)' }
@@ -227,41 +186,17 @@ export default function MaterialsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="custoPorUnidade">Custo por Unidade *</Label>
-                  <Input
-                    id="custoPorUnidade"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={formData.custoPorUnidade}
-                    onChange={(e) => setFormData(prev => ({ ...prev, custoPorUnidade: e.target.value }))}
-                    placeholder="0.00"
-                    required
-                  />
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="estoque">Estoque</Label>
-                  <Input
-                    id="estoque"
-                    type="number"
-                    min="0"
-                    value={formData.estoque}
-                    onChange={(e) => setFormData(prev => ({ ...prev, estoque: e.target.value }))}
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-
               <div className="space-y-2">
-                <Label htmlFor="fornecedor">Fornecedor</Label>
+                <Label htmlFor="cost_per_unit">Custo por Unidade *</Label>
                 <Input
-                  id="fornecedor"
-                  value={formData.fornecedor}
-                  onChange={(e) => setFormData(prev => ({ ...prev, fornecedor: e.target.value }))}
-                  placeholder="Nome do fornecedor"
+                  id="cost_per_unit"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formData.cost_per_unit}
+                  onChange={(e) => setFormData(prev => ({ ...prev, cost_per_unit: e.target.value }))}
+                  placeholder="0.00"
+                  required
                 />
               </div>
 
@@ -277,24 +212,6 @@ export default function MaterialsPage() {
           </DialogContent>
         </Dialog>
       </div>
-
-      {/* Plan Limit Warning */}
-      {!planLimits.canCreate && (
-        <Card className="border-amber-500/20 bg-amber-500/5">
-          <CardContent className="flex items-center gap-3 p-4">
-            <AlertTriangle className="h-5 w-5 text-amber-500" />
-            <div className="flex-1">
-              <p className="font-medium text-amber-500">Limite de materiais atingido</p>
-              <p className="text-sm text-muted-foreground">
-                Você atingiu o limite de {planLimits.limit} materiais do plano gratuito.
-              </p>
-            </div>
-            <Button variant="outline" size="sm" className="border-amber-500/20 text-amber-500 hover:bg-amber-500/10">
-              Upgrade Pro
-            </Button>
-          </CardContent>
-        </Card>
-      )}
 
       <Card>
         <CardHeader>
@@ -338,7 +255,7 @@ export default function MaterialsPage() {
               <p className="text-muted-foreground mb-4">
                 {search || unitFilter ? 'Tente ajustar seus filtros.' : 'Comece adicionando seu primeiro material.'}
               </p>
-              {!search && !unitFilter && planLimits.canCreate && (
+              {!search && !unitFilter && (
                 <Button onClick={() => handleOpenDialog()}>
                   <Plus className="mr-2 h-4 w-4" />
                   Adicionar Material
@@ -352,8 +269,6 @@ export default function MaterialsPage() {
                   <TableHead>Nome</TableHead>
                   <TableHead>Unidade</TableHead>
                   <TableHead>Custo/Unidade</TableHead>
-                  <TableHead>Estoque</TableHead>
-                  <TableHead>Fornecedor</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
@@ -363,25 +278,17 @@ export default function MaterialsPage() {
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         <Package className="h-4 w-4 text-muted-foreground" />
-                        {str(material.nome)}
+                        {material.name}
                       </div>
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="flex items-center gap-1 w-fit">
                         <Ruler className="h-3 w-3" />
-                        {material.unidade}
+                        {material.unit}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      {formatCurrency(num(material.custoPorUnidade, 0), currency, locale)}
-                    </TableCell>
-                    <TableCell>
-                      <span className={num(material.estoque, 0) <= 10 ? 'text-amber-600' : ''}>
-                        {num(material.estoque, 0)} {material.unidade}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      {str(material.fornecedor) || '-'}
+                      {formatCurrency(material.cost_per_unit || 0, currency, locale)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end space-x-2">
@@ -402,7 +309,7 @@ export default function MaterialsPage() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
                               <AlertDialogDescription>
-                                Tem certeza que deseja excluir o material "{str(material.nome)}"? Esta ação não pode ser desfeita.
+                                Tem certeza que deseja excluir o material "{material.name}"? Esta ação não pode ser desfeita.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>

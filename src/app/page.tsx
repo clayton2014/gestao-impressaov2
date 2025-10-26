@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useAppStore } from '@/lib/store';
+import { supabase } from '@/lib/supa';
+import { getUser } from '@/lib/auth-client';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import Dashboard from '@/components/Dashboard';
@@ -16,7 +17,8 @@ import {
   SettingsPage
 } from '@/components/pages';
 import { cn } from '@/lib/utils';
-import { seedDatabase } from '@/lib/database';
+import type { User } from '@supabase/supabase-js';
+import { useAppStore } from '@/lib/store';
 
 const routes: Record<string, React.ReactNode> = {
   "dashboard": <Dashboard />,
@@ -32,13 +34,15 @@ const routes: Record<string, React.ReactNode> = {
 export default function Home() {
   const currentPage = useAppStore(s => s.currentPage) || "dashboard";
   const sidebarOpen = useAppStore(s => s.sidebarOpen);
-  const userId = useAppStore(s => s.auth.userId);
+  const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        await seedDatabase();
+        // Verificar usuário atual
+        const currentUser = await getUser();
+        setUser(currentUser);
       } catch (error) {
         console.error('Error initializing app:', error);
       } finally {
@@ -47,6 +51,13 @@ export default function Home() {
     };
 
     initializeApp();
+
+    // Escutar mudanças de autenticação
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   if (isLoading) {
@@ -61,7 +72,7 @@ export default function Home() {
   }
 
   // Se não estiver logado, mostrar tela de autenticação
-  if (!userId) {
+  if (!user) {
     return <AuthModal />;
   }
 

@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Plus, Search, Edit, Trash2, User, Mail, Phone, MapPin, FileText } from 'lucide-react';
 import useTranslation from '@/hooks/useTranslation';
 import { formatDate } from '@/lib/datetime';
-import { getClients, createClient, updateClient, deleteClient, checkPlanLimits } from '@/lib/database';
+import { ClientsDAO } from '@/lib/dao';
 import type { Client } from '@/lib/types';
 import { toast } from 'sonner';
 
@@ -22,60 +22,44 @@ export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
-  const [planLimits, setPlanLimits] = useState({ canCreate: true, limit: 0, current: 0 });
 
   // Form state
   const [formData, setFormData] = useState({
-    nome: '',
-    doc: '',
-    contato: '',
+    name: '',
     email: '',
-    telefone: '',
-    endereco: '',
-    notas: ''
+    phone: '',
+    notes: ''
   });
 
   const loadClients = async () => {
     setLoading(true);
     try {
-      const result = await getClients(page, 10, search);
-      setClients(result.data);
-      setTotalPages(result.totalPages);
+      const data = await ClientsDAO.list();
+      setClients(data);
     } catch (error) {
       console.error('Error loading clients:', error);
+      toast.error('Erro ao carregar clientes');
     } finally {
       setLoading(false);
     }
   };
 
-  const loadPlanLimits = async () => {
-    const limits = await checkPlanLimits('clients');
-    setPlanLimits(limits);
-  };
-
   useEffect(() => {
     loadClients();
-    loadPlanLimits();
-  }, [page, search]);
+  }, []);
 
   const handleSearch = (value: string) => {
     setSearch(value);
-    setPage(1);
   };
 
   const resetForm = () => {
     setFormData({
-      nome: '',
-      doc: '',
-      contato: '',
+      name: '',
       email: '',
-      telefone: '',
-      endereco: '',
-      notas: ''
+      phone: '',
+      notes: ''
     });
     setEditingClient(null);
   };
@@ -84,13 +68,10 @@ export default function ClientsPage() {
     if (client) {
       setEditingClient(client);
       setFormData({
-        nome: client.nome,
-        doc: client.doc || '',
-        contato: client.contato || '',
+        name: client.name || '',
         email: client.email || '',
-        telefone: client.telefone || '',
-        endereco: client.endereco || '',
-        notas: client.notas || ''
+        phone: client.phone || '',
+        notes: client.notes || ''
       });
     } else {
       resetForm();
@@ -101,36 +82,46 @@ export default function ClientsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.nome.trim()) {
+    if (!formData.name.trim()) {
       toast.error('Nome é obrigatório');
       return;
     }
 
     try {
       if (editingClient) {
-        await updateClient(editingClient.id, formData);
+        await ClientsDAO.update(editingClient.id, formData);
+        toast.success('Cliente atualizado com sucesso!');
       } else {
-        await createClient(formData);
+        await ClientsDAO.create(formData);
+        toast.success('Cliente criado com sucesso!');
       }
       
       setIsDialogOpen(false);
       resetForm();
       loadClients();
-      loadPlanLimits();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving client:', error);
+      toast.error(error.message || 'Erro ao salvar cliente');
     }
   };
 
   const handleDelete = async (id: string) => {
     try {
-      await deleteClient(id);
+      await ClientsDAO.remove(id);
+      toast.success('Cliente excluído com sucesso!');
       loadClients();
-      loadPlanLimits();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error deleting client:', error);
+      toast.error(error.message || 'Erro ao excluir cliente');
     }
   };
+
+  // Filter clients based on search
+  const filteredClients = clients.filter(client =>
+    client.name?.toLowerCase().includes(search.toLowerCase()) ||
+    client.email?.toLowerCase().includes(search.toLowerCase()) ||
+    client.phone?.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <div className="space-y-6">
@@ -141,10 +132,7 @@ export default function ClientsPage() {
             {t('clients.title')}
           </h1>
           <p className="text-slate-600 dark:text-slate-400 mt-1">
-            {planLimits.limit === Infinity 
-              ? `${planLimits.current} clientes` 
-              : `${planLimits.current}/${planLimits.limit} clientes`
-            }
+            {clients.length} clientes
           </p>
         </div>
         
@@ -152,7 +140,6 @@ export default function ClientsPage() {
           <DialogTrigger asChild>
             <Button 
               onClick={() => handleOpenDialog()}
-              disabled={!planLimits.canCreate}
               className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
             >
               <Plus className="w-4 h-4 mr-2" />
@@ -170,33 +157,13 @@ export default function ClientsPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <Label htmlFor="nome">{t('clients.clientName')} *</Label>
+                  <Label htmlFor="name">{t('clients.clientName')} *</Label>
                   <Input
-                    id="nome"
-                    value={formData.nome}
-                    onChange={(e) => setFormData({ ...formData, nome: e.target.value })}
+                    id="name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     placeholder="Nome do cliente"
                     required
-                  />
-                </div>
-                
-                <div>
-                  <Label htmlFor="doc">{t('clients.document')}</Label>
-                  <Input
-                    id="doc"
-                    value={formData.doc}
-                    onChange={(e) => setFormData({ ...formData, doc: e.target.value })}
-                    placeholder="CPF/CNPJ"
-                  />
-                </div>
-                
-                <div>
-                  <Label htmlFor="contato">{t('clients.contact')}</Label>
-                  <Input
-                    id="contato"
-                    value={formData.contato}
-                    onChange={(e) => setFormData({ ...formData, contato: e.target.value })}
-                    placeholder="Nome do contato"
                   />
                 </div>
                 
@@ -212,31 +179,21 @@ export default function ClientsPage() {
                 </div>
                 
                 <div>
-                  <Label htmlFor="telefone">{t('common.phone')}</Label>
+                  <Label htmlFor="phone">{t('common.phone')}</Label>
                   <Input
-                    id="telefone"
-                    value={formData.telefone}
-                    onChange={(e) => setFormData({ ...formData, telefone: e.target.value })}
+                    id="phone"
+                    value={formData.phone}
+                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     placeholder="(11) 99999-9999"
                   />
                 </div>
                 
                 <div className="col-span-2">
-                  <Label htmlFor="endereco">{t('common.address')}</Label>
-                  <Input
-                    id="endereco"
-                    value={formData.endereco}
-                    onChange={(e) => setFormData({ ...formData, endereco: e.target.value })}
-                    placeholder="Endereço completo"
-                  />
-                </div>
-                
-                <div className="col-span-2">
-                  <Label htmlFor="notas">{t('common.notes')}</Label>
+                  <Label htmlFor="notes">{t('common.notes')}</Label>
                   <Textarea
-                    id="notas"
-                    value={formData.notas}
-                    onChange={(e) => setFormData({ ...formData, notas: e.target.value })}
+                    id="notes"
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                     placeholder="Observações sobre o cliente"
                     rows={3}
                   />
@@ -273,25 +230,6 @@ export default function ClientsPage() {
         </div>
       </div>
 
-      {/* Plan Limit Warning */}
-      {!planLimits.canCreate && (
-        <Card className="border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950">
-          <CardContent className="pt-6">
-            <div className="flex items-center space-x-2">
-              <Badge variant="secondary" className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
-                Plano Gratuito
-              </Badge>
-              <span className="text-sm text-orange-700 dark:text-orange-300">
-                Limite de {planLimits.limit} clientes atingido. 
-                <Button variant="link" className="p-0 h-auto text-orange-700 dark:text-orange-300">
-                  Faça upgrade para Pro
-                </Button>
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Clients Table */}
       <Card>
         <CardHeader>
@@ -306,7 +244,7 @@ export default function ClientsPage() {
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
               <p className="text-slate-600 dark:text-slate-400 mt-2">{t('common.loading')}</p>
             </div>
-          ) : clients.length === 0 ? (
+          ) : filteredClients.length === 0 ? (
             <div className="text-center py-8">
               <User className="w-12 h-12 text-slate-400 mx-auto mb-4" />
               <p className="text-slate-600 dark:text-slate-400">{t('common.noData')}</p>
@@ -317,8 +255,6 @@ export default function ClientsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t('common.name')}</TableHead>
-                    <TableHead>{t('clients.document')}</TableHead>
-                    <TableHead>{t('clients.contact')}</TableHead>
                     <TableHead>{t('common.email')}</TableHead>
                     <TableHead>{t('common.phone')}</TableHead>
                     <TableHead>{t('common.created')}</TableHead>
@@ -326,11 +262,9 @@ export default function ClientsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {clients.map((client) => (
+                  {filteredClients.map((client) => (
                     <TableRow key={client.id}>
-                      <TableCell className="font-medium">{client.nome}</TableCell>
-                      <TableCell>{client.doc || '-'}</TableCell>
-                      <TableCell>{client.contato || '-'}</TableCell>
+                      <TableCell className="font-medium">{client.name}</TableCell>
                       <TableCell>
                         {client.email ? (
                           <div className="flex items-center space-x-1">
@@ -340,14 +274,14 @@ export default function ClientsPage() {
                         ) : '-'}
                       </TableCell>
                       <TableCell>
-                        {client.telefone ? (
+                        {client.phone ? (
                           <div className="flex items-center space-x-1">
                             <Phone className="w-4 h-4 text-slate-400" />
-                            <span>{client.telefone}</span>
+                            <span>{client.phone}</span>
                           </div>
                         ) : '-'}
                       </TableCell>
-                      <TableCell>{formatDate(client.createdAt)}</TableCell>
+                      <TableCell>{formatDate(client.created_at)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end space-x-2">
                           <Button
@@ -388,33 +322,6 @@ export default function ClientsPage() {
                   ))}
                 </TableBody>
               </Table>
-            </div>
-          )}
-          
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between mt-4">
-              <p className="text-sm text-slate-600 dark:text-slate-400">
-                Página {page} de {totalPages}
-              </p>
-              <div className="flex space-x-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage(page - 1)}
-                  disabled={page === 1}
-                >
-                  {t('actions.previous')}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage(page + 1)}
-                  disabled={page === totalPages}
-                >
-                  {t('actions.next')}
-                </Button>
-              </div>
             </div>
           )}
         </CardContent>
