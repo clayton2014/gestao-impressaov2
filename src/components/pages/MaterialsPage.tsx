@@ -1,334 +1,301 @@
-'use client';
+"use client";
+import React, { useState } from "react";
+import EmptyState from "@/components/EmptyState";
+import Modal from "@/components/Modal";
+import { MaterialsDAO } from "@/lib/dao";
+import { seedSupabase, migrateFromLocalStorage, getCounts } from "@/lib/seed";
+import { useSafeLoader } from "@/hooks/useSafeLoader";
+import { toast } from "sonner";
 
-import { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Label } from '@/components/ui/label';
-import { SafeSelect } from '@/components/ui/safe-select';
-import { Plus, Search, Edit, Trash2, Package, Ruler, AlertTriangle } from 'lucide-react';
-import { useTranslation, formatCurrency } from '@/hooks/useTranslation';
-import { MaterialsDAO } from '@/lib/dao';
-import type { Material } from '@/lib/types';
-import { toast } from 'sonner';
-import { useAppStore } from '@/lib/store';
+interface Material {
+  id: string;
+  name: string;
+  unit: 'm' | 'm2';
+  cost_per_unit: number;
+  created_at: string;
+}
+
+interface MaterialFormData {
+  name: string;
+  unit: 'm' | 'm2';
+  cost_per_unit: string;
+}
 
 export default function MaterialsPage() {
-  const { t, formatDate } = useTranslation();
-  const { currency, locale } = useAppStore();
-  const [materials, setMaterials] = useState<Material[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [unitFilter, setUnitFilter] = useState('');
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const { data, loading, errorMsg, reload } = useSafeLoader(()=>MaterialsDAO.list(), []);
+  const rows = Array.isArray(data) ? data : [];
+  
+  const [showModal, setShowModal] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
-
-  // Form state
-  const [formData, setFormData] = useState({
-    name: '',
-    unit: 'm2' as 'm' | 'm2',
-    cost_per_unit: '',
+  const [formData, setFormData] = useState<MaterialFormData>({
+    name: "",
+    unit: "m",
+    cost_per_unit: ""
   });
+  const [saving, setSaving] = useState(false);
 
-  const loadMaterials = async () => {
-    setLoading(true);
-    try {
-      const data = await MaterialsDAO.list();
-      setMaterials(data);
-    } catch (error) {
-      console.error('Error loading materials:', error);
-      toast.error('Erro ao carregar materiais');
-    } finally {
-      setLoading(false);
-    }
-  };
+  async function doSeed(){
+    await seedSupabase();
+    toast.success("Exemplos criados."); 
+    reload();
+  }
+  
+  async function doMigrate(){
+    const r = await migrateFromLocalStorage();
+    toast.success(r.moved ? "Dados locais importados." : "Nada para importar.");
+    reload();
+  }
+  
+  async function doDiag(){
+    const c = await getCounts();
+    toast.info(`Clientes: ${c.clients} · Materiais: ${c.materials} · Tintas: ${c.inks} · Serviços: ${c.service_orders}`);
+  }
 
-  useEffect(() => {
-    loadMaterials();
-  }, []);
-
-  const handleSearch = (value: string) => {
-    setSearch(value);
-  };
-
-  const resetForm = () => {
-    setFormData({
-      name: '',
-      unit: 'm2',
-      cost_per_unit: '',
-    });
+  function openCreateModal() {
     setEditingMaterial(null);
-  };
+    setFormData({ name: "", unit: "m", cost_per_unit: "" });
+    setShowModal(true);
+  }
 
-  const handleOpenDialog = (material?: Material) => {
-    if (material) {
-      setEditingMaterial(material);
-      setFormData({
-        name: material.name || '',
-        unit: material.unit,
-        cost_per_unit: material.cost_per_unit?.toString() || '',
-      });
-    } else {
-      resetForm();
-    }
-    setIsDialogOpen(true);
-  };
+  function openEditModal(material: Material) {
+    setEditingMaterial(material);
+    setFormData({
+      name: material.name,
+      unit: material.unit,
+      cost_per_unit: material.cost_per_unit.toString()
+    });
+    setShowModal(true);
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  function closeModal() {
+    setShowModal(false);
+    setEditingMaterial(null);
+    setFormData({ name: "", unit: "m", cost_per_unit: "" });
+  }
+
+  async function handleSave() {
     if (!formData.name.trim()) {
-      toast.error('Nome é obrigatório');
+      toast.error("Nome é obrigatório");
       return;
     }
 
-    if (!formData.cost_per_unit || isNaN(Number(formData.cost_per_unit))) {
-      toast.error('Custo por unidade deve ser um número válido');
+    const costValue = parseFloat(formData.cost_per_unit);
+    if (isNaN(costValue) || costValue < 0) {
+      toast.error("Custo deve ser um número válido");
       return;
     }
 
+    setSaving(true);
     try {
-      const materialData = {
+      const payload = {
         name: formData.name.trim(),
         unit: formData.unit,
-        cost_per_unit: Number(formData.cost_per_unit),
+        cost_per_unit: costValue
       };
 
       if (editingMaterial) {
-        await MaterialsDAO.update(editingMaterial.id, materialData);
-        toast.success('Material atualizado com sucesso!');
+        await MaterialsDAO.update(editingMaterial.id, payload);
+        toast.success("Material atualizado com sucesso");
       } else {
-        await MaterialsDAO.create(materialData);
-        toast.success('Material criado com sucesso!');
+        await MaterialsDAO.create(payload);
+        toast.success("Material criado com sucesso");
       }
 
-      setIsDialogOpen(false);
-      resetForm();
-      loadMaterials();
+      closeModal();
+      reload();
     } catch (error: any) {
-      console.error('Error saving material:', error);
-      toast.error(error.message || 'Erro ao salvar material');
+      toast.error(error.message || "Erro ao salvar material");
+    } finally {
+      setSaving(false);
     }
-  };
+  }
 
-  const handleDelete = async (id: string) => {
+  async function handleDelete(material: Material) {
+    if (!confirm(`Tem certeza que deseja excluir o material "${material.name}"?`)) {
+      return;
+    }
+
     try {
-      await MaterialsDAO.remove(id);
-      toast.success('Material excluído com sucesso!');
-      loadMaterials();
+      await MaterialsDAO.remove(material.id);
+      toast.success("Material excluído com sucesso");
+      reload();
     } catch (error: any) {
-      console.error('Error deleting material:', error);
-      toast.error(error.message || 'Erro ao excluir material');
+      toast.error(error.message || "Erro ao excluir material");
     }
-  };
+  }
 
-  // Filter materials
-  const filteredMaterials = materials.filter(material => {
-    const matchesSearch = material.name?.toLowerCase().includes(search.toLowerCase());
-    const matchesUnit = !unitFilter || material.unit === unitFilter;
-    return matchesSearch && matchesUnit;
-  });
+  // Listener para recarregar após criar/editar
+  React.useEffect(()=>{
+    const h=()=>reload(); 
+    window.addEventListener("reload:list",h); 
+    return ()=>window.removeEventListener("reload:list",h);
+  },[reload]);
+
+  if (loading) return <div className="p-6 text-sm text-muted-foreground">Carregando materiais...</div>;
+  
+  if (errorMsg) return (
+    <div className="p-6">
+      <p className="text-red-600 text-sm mb-3">Erro: {errorMsg}</p>
+      <button className="btn btn-primary" onClick={reload}>Tentar novamente</button>
+    </div>
+  );
+
+  if (rows.length === 0) {
+    return (
+      <div className="p-6">
+        <h2 className="text-lg font-semibold">Materiais</h2>
+        <p className="text-sm text-muted-foreground mb-4">Gerencie seus materiais</p>
+        <EmptyState
+          titulo="Nenhum material encontrado"
+          subtitulo="Crie o primeiro material, importe do navegador ou popular com exemplos."
+          onCreate={openCreateModal}
+          onSeed={doSeed}
+          onMigrate={doMigrate}
+          onDiagnose={doDiag}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-6">
+      <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-3xl font-bold">Materiais</h1>
-          <p className="text-muted-foreground">
-            Gerencie seus materiais ({materials.length})
-          </p>
+          <h2 className="text-lg font-semibold">Materiais</h2>
+          <p className="text-sm text-muted-foreground">Gerencie seus materiais</p>
         </div>
-        
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger asChild>
-            <Button 
-              onClick={() => handleOpenDialog()}
-              className="bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-600 hover:to-cyan-600"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Novo Material
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>
-                {editingMaterial ? 'Editar Material' : 'Novo Material'}
-              </DialogTitle>
-            </DialogHeader>
-            
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Nome *</Label>
-                  <Input
-                    id="name"
-                    value={formData.name}
-                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder="Nome do material"
-                    required
-                  />
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="unit">Unidade *</Label>
-                  <SafeSelect
-                    value={formData.unit}
-                    onChange={(value) => setFormData(prev => ({ ...prev, unit: value as 'm' | 'm2' }))}
-                    options={[
-                      { value: 'm', label: 'm (metro linear)' },
-                      { value: 'm2', label: 'm² (metro quadrado)' }
-                    ]}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="cost_per_unit">Custo por Unidade *</Label>
-                <Input
-                  id="cost_per_unit"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={formData.cost_per_unit}
-                  onChange={(e) => setFormData(prev => ({ ...prev, cost_per_unit: e.target.value }))}
-                  placeholder="0.00"
-                  required
-                />
-              </div>
-
-              <div className="flex justify-end space-x-2">
-                <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
-                  Cancelar
-                </Button>
-                <Button type="submit">
-                  {editingMaterial ? 'Atualizar' : 'Criar'} Material
-                </Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
+        <button
+          onClick={openCreateModal}
+          className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all"
+        >
+          Novo Material
+        </button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Lista de Materiais</CardTitle>
-            
-            <div className="flex items-center space-x-2">
-              <SafeSelect
-                value={unitFilter}
-                onChange={setUnitFilter}
-                placeholder="Unidade"
-                options={[
-                  { value: "", label: "Todas" },
-                  { value: "m", label: "m" },
-                  { value: "m2", label: "m²" }
-                ]}
-                className="w-32"
-              />
-              
-              <div className="relative">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Buscar materiais..."
-                  value={search}
-                  onChange={(e) => handleSearch(e.target.value)}
-                  className="pl-8 w-64"
-                />
-              </div>
-            </div>
+      {/* Tabela de materiais */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50 dark:bg-gray-700">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Nome
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Unidade
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Custo por Unidade
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Ações
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              {rows.map((material: Material) => (
+                <tr key={material.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="font-medium text-gray-900 dark:text-gray-100">
+                      {material.name}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                      {material.unit}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                    R$ {material.cost_per_unit.toFixed(2)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button
+                      onClick={() => openEditModal(material)}
+                      className="text-blue-600 hover:text-blue-900 mr-3"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      onClick={() => handleDelete(material)}
+                      className="text-red-600 hover:text-red-900"
+                    >
+                      Excluir
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Modal de criar/editar */}
+      <Modal
+        isOpen={showModal}
+        onClose={closeModal}
+        title={editingMaterial ? "Editar Material" : "Novo Material"}
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Nome *
+            </label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+              placeholder="Nome do material"
+            />
           </div>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
-            </div>
-          ) : filteredMaterials.length === 0 ? (
-            <div className="text-center py-8">
-              <Package className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-              <h3 className="text-lg font-medium mb-2">Nenhum material encontrado</h3>
-              <p className="text-muted-foreground mb-4">
-                {search || unitFilter ? 'Tente ajustar seus filtros.' : 'Comece adicionando seu primeiro material.'}
-              </p>
-              {!search && !unitFilter && (
-                <Button onClick={() => handleOpenDialog()}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Adicionar Material
-                </Button>
-              )}
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nome</TableHead>
-                  <TableHead>Unidade</TableHead>
-                  <TableHead>Custo/Unidade</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredMaterials.map((material) => (
-                  <TableRow key={material.id}>
-                    <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">
-                        <Package className="h-4 w-4 text-muted-foreground" />
-                        {material.name}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="flex items-center gap-1 w-fit">
-                        <Ruler className="h-3 w-3" />
-                        {material.unit}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {formatCurrency(material.cost_per_unit || 0, currency, locale)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleOpenDialog(material)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="outline" size="sm">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Tem certeza que deseja excluir o material "{material.name}"? Esta ação não pode ser desfeita.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleDelete(material.id)}>
-                                Excluir
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Unidade *
+            </label>
+            <select
+              value={formData.unit}
+              onChange={(e) => setFormData({ ...formData, unit: e.target.value as 'm' | 'm2' })}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+            >
+              <option value="m">Metro (m)</option>
+              <option value="m2">Metro Quadrado (m²)</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Custo por Unidade *
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={formData.cost_per_unit}
+              onChange={(e) => setFormData({ ...formData, cost_per_unit: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+              placeholder="0.00"
+            />
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4">
+            <button
+              onClick={closeModal}
+              disabled={saving}
+              className="px-4 py-2 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 disabled:opacity-50"
+            >
+              {saving ? "Salvando..." : "Salvar"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

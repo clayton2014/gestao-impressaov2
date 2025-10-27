@@ -1,274 +1,154 @@
-'use client';
+"use client";
+import React, { useState } from "react";
+import { SettingsDAO } from "@/lib/dao";
+import { useSafeLoader } from "@/hooks/useSafeLoader";
+import { toast } from "sonner";
 
-import { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { SafeSelect } from '@/components/ui/safe-select';
-import { Settings, Save, User, Globe, DollarSign, Calculator } from 'lucide-react';
-import { toast } from 'sonner';
-import { SettingsDAO } from '@/lib/dao';
-import { useAppStore } from '@/lib/store';
-
-interface SettingsData {
-  locale: string;
-  currency: string;
-  taxes_pct: number;
-  default_markup_pct: number;
-  default_unit: string;
-  theme: string;
-  company_name: string;
-  company_logo_url: string;
+interface Settings {
+  default_labor_rate?: number;
+  default_markup?: number;
+  currency?: string;
+  theme?: string;
 }
 
 export default function SettingsPage() {
-  const { locale, currency, theme } = useAppStore();
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [settings, setSettings] = useState<SettingsData>({
-    locale: locale || 'pt-BR',
-    currency: currency || 'BRL',
-    taxes_pct: 0,
-    default_markup_pct: 40,
-    default_unit: 'm2',
-    theme: theme || 'system',
-    company_name: '',
-    company_logo_url: ''
+  const { data, loading, errorMsg, reload } = useSafeLoader(()=>SettingsDAO.get(), {});
+  const settings = data || {};
+  
+  const [formData, setFormData] = useState<Settings>({
+    default_labor_rate: settings.default_labor_rate || 60,
+    default_markup: settings.default_markup || 40,
+    currency: settings.currency || 'BRL',
+    theme: settings.theme || 'system'
   });
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  const loadSettings = async () => {
-    try {
-      setLoading(true);
-      const data = await SettingsDAO.get();
-      if (data) {
-        setSettings({
-          locale: data.locale || 'pt-BR',
-          currency: data.currency || 'BRL',
-          taxes_pct: data.taxes_pct || 0,
-          default_markup_pct: data.default_markup_pct || 40,
-          default_unit: data.default_unit || 'm2',
-          theme: data.theme || 'system',
-          company_name: data.company_name || '',
-          company_logo_url: data.company_logo_url || ''
-        });
-      }
-    } catch (error) {
-      console.error('Error loading settings:', error);
-      toast.error('Erro ao carregar configurações');
-    } finally {
-      setLoading(false);
+  React.useEffect(() => {
+    if (data) {
+      setFormData({
+        default_labor_rate: data.default_labor_rate || 60,
+        default_markup: data.default_markup || 40,
+        currency: data.currency || 'BRL',
+        theme: data.theme || 'system'
+      });
     }
-  };
+  }, [data]);
 
-  const handleSave = async () => {
+  async function handleSave() {
+    setSaving(true);
     try {
-      setSaving(true);
-      await SettingsDAO.upsert(settings);
-      toast.success('Configurações salvas com sucesso!');
+      await SettingsDAO.upsert(formData);
+      toast.success("Configurações salvas com sucesso");
+      reload();
     } catch (error: any) {
-      console.error('Error saving settings:', error);
-      toast.error(error.message || 'Erro ao salvar configurações');
+      toast.error(error.message || "Erro ao salvar configurações");
     } finally {
       setSaving(false);
     }
-  };
-
-  const updateSetting = (key: keyof SettingsData, value: any) => {
-    setSettings(prev => ({ ...prev, [key]: value }));
-  };
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold">Configurações</h1>
-        </div>
-        <div className="flex items-center justify-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
-        </div>
-      </div>
-    );
   }
 
+  if (loading) return <div className="p-6 text-sm text-muted-foreground">Carregando configurações...</div>;
+  
+  if (errorMsg) return (
+    <div className="p-6">
+      <p className="text-red-600 text-sm mb-3">Erro: {errorMsg}</p>
+      <button className="btn btn-primary" onClick={reload}>Tentar novamente</button>
+    </div>
+  );
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Configurações</h1>
-          <p className="text-muted-foreground">
-            Personalize suas preferências do sistema
-          </p>
-        </div>
-        
-        <Button 
-          onClick={handleSave}
-          disabled={saving}
-          className="bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-600 hover:to-cyan-600"
-        >
-          <Save className="mr-2 h-4 w-4" />
-          {saving ? 'Salvando...' : 'Salvar Configurações'}
-        </Button>
+    <div className="p-6">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Configurações</h1>
+        <p className="text-gray-600 dark:text-gray-400">Personalize as configurações do sistema</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Company Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <User className="h-5 w-5" />
-              Empresa
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="company_name">Nome da Empresa</Label>
-              <Input
-                id="company_name"
-                value={settings.company_name}
-                onChange={(e) => updateSetting('company_name', e.target.value)}
-                placeholder="Nome da sua empresa"
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="company_logo_url">URL do Logo</Label>
-              <Input
-                id="company_logo_url"
-                value={settings.company_logo_url}
-                onChange={(e) => updateSetting('company_logo_url', e.target.value)}
-                placeholder="https://exemplo.com/logo.png"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Localization */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Globe className="h-5 w-5" />
-              Localização
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="locale">Idioma</Label>
-              <SafeSelect
-                value={settings.locale}
-                onChange={(value) => updateSetting('locale', value)}
-                options={[
-                  { value: 'pt-BR', label: 'Português (Brasil)' },
-                  { value: 'en', label: 'English' }
-                ]}
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="currency">Moeda</Label>
-              <SafeSelect
-                value={settings.currency}
-                onChange={(value) => updateSetting('currency', value)}
-                options={[
-                  { value: 'BRL', label: 'Real (R$)' },
-                  { value: 'USD', label: 'Dólar ($)' },
-                  { value: 'EUR', label: 'Euro (€)' }
-                ]}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="theme">Tema</Label>
-              <SafeSelect
-                value={settings.theme}
-                onChange={(value) => updateSetting('theme', value)}
-                options={[
-                  { value: 'system', label: 'Sistema' },
-                  { value: 'light', label: 'Claro' },
-                  { value: 'dark', label: 'Escuro' }
-                ]}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Financial Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <DollarSign className="h-5 w-5" />
-              Financeiro
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="taxes_pct">Impostos (%)</Label>
-              <Input
-                id="taxes_pct"
+      <div className="max-w-2xl">
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-6">Configurações Gerais</h3>
+          
+          <div className="space-y-6">
+            {/* Valor padrão da hora */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Valor Padrão da Hora de Trabalho
+              </label>
+              <input
                 type="number"
-                step="0.1"
+                step="0.01"
                 min="0"
-                max="100"
-                value={settings.taxes_pct}
-                onChange={(e) => updateSetting('taxes_pct', Number(e.target.value))}
-                placeholder="0"
+                value={formData.default_labor_rate}
+                onChange={(e) => setFormData({ ...formData, default_labor_rate: parseFloat(e.target.value) || 0 })}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                placeholder="60.00"
               />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Valor que será usado por padrão ao criar novos serviços
+              </p>
             </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="default_markup_pct">Margem de Lucro Padrão (%)</Label>
-              <Input
-                id="default_markup_pct"
+
+            {/* Markup padrão */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Markup Padrão (%)
+              </label>
+              <input
                 type="number"
-                step="0.1"
                 min="0"
-                max="1000"
-                value={settings.default_markup_pct}
-                onChange={(e) => updateSetting('default_markup_pct', Number(e.target.value))}
+                value={formData.default_markup}
+                onChange={(e) => setFormData({ ...formData, default_markup: parseFloat(e.target.value) || 0 })}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                 placeholder="40"
               />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Percentual de markup que será aplicado por padrão nos serviços
+              </p>
             </div>
-          </CardContent>
-        </Card>
 
-        {/* Default Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calculator className="h-5 w-5" />
-              Padrões
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="default_unit">Unidade Padrão</Label>
-              <SafeSelect
-                value={settings.default_unit}
-                onChange={(value) => updateSetting('default_unit', value)}
-                options={[
-                  { value: 'm', label: 'm (metro linear)' },
-                  { value: 'm2', label: 'm² (metro quadrado)' }
-                ]}
-              />
+            {/* Moeda */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Moeda
+              </label>
+              <select
+                value={formData.currency}
+                onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+              >
+                <option value="BRL">Real Brasileiro (R$)</option>
+                <option value="USD">Dólar Americano ($)</option>
+                <option value="EUR">Euro (€)</option>
+              </select>
             </div>
-          </CardContent>
-        </Card>
-      </div>
 
-      {/* Save Button (Mobile) */}
-      <div className="md:hidden">
-        <Button 
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-600 hover:to-cyan-600"
-        >
-          <Save className="mr-2 h-4 w-4" />
-          {saving ? 'Salvando...' : 'Salvar Configurações'}
-        </Button>
+            {/* Tema */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Tema
+              </label>
+              <select
+                value={formData.theme}
+                onChange={(e) => setFormData({ ...formData, theme: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+              >
+                <option value="system">Seguir sistema</option>
+                <option value="light">Claro</option>
+                <option value="dark">Escuro</option>
+              </select>
+            </div>
+
+            {/* Botão salvar */}
+            <div className="pt-4">
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-6 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:from-purple-600 hover:to-pink-600 disabled:opacity-50"
+              >
+                {saving ? "Salvando..." : "Salvar Configurações"}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

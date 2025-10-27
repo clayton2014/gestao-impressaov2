@@ -1,3 +1,4 @@
+export { default as Dashboard } from "./Dashboard";
 export { default as ClientsPage } from "./ClientsPage";
 export { default as MaterialsPage } from "./MaterialsPage";
 export { default as InksPage } from "./InksPage";

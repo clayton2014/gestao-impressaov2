@@ -1,62 +1,193 @@
+import { TABLE } from "@/lib/tables";
 import { supabase } from "./supa";
-const uid = async()=> (await supabase.auth.getUser()).data.user?.id;
+import { logSupa } from "./error";
+import { requireUserId } from "./auth-guard";
 
-export const ClientsDAO={
-  async list(){ const {data,error}=await supabase.from("clients").select("*").order("created_at",{ascending:false}); if(error) throw error; return data??[]; },
-  async create(input:any){ const user_id=await uid(); if(!user_id) throw new Error("unauth"); const {data,error}=await supabase.from("clients").insert({ ...input, user_id }).select().single(); if(error) throw error; return data; },
-  async update(id:string, patch:any){ const {data,error}=await supabase.from("clients").update(patch).eq("id",id).select().single(); if(error) throw error; return data; },
-  async remove(id:string){ const {error}=await supabase.from("clients").delete().eq("id",id); if(error) throw error; }
+const ok = <T>(data: T, error: any, where: string): T => {
+  if (error) { const m = logSupa(where, error); throw new Error(m); }
+  // @ts-ignore
+  return data ?? [];
 };
 
-export const MaterialsDAO={
-  async list(){ const {data,error}=await supabase.from("materials").select("*").order("created_at",{ascending:false}); if(error) throw error; return data??[]; },
-  async create(input:any){ const user_id=await uid(); if(!user_id) throw new Error("unauth"); const {data,error}=await supabase.from("materials").insert({ ...input, user_id }).select().single(); if(error) throw error; return data; },
-  async update(id:string, patch:any){ const {data,error}=await supabase.from("materials").update(patch).eq("id",id).select().single(); if(error) throw error; return data; },
-  async remove(id:string){ const {error}=await supabase.from("materials").delete().eq("id",id); if(error) throw error; }
+function isRelErr(e:any){
+  const m = (e?.message || "").toLowerCase();
+  return m.includes("could not find a relationship") || m.includes("schema cache");
+}
+
+export const ClientsDAO = {
+  async list() {
+    const { data, error } = await supabase.from(TABLE.CLIENTS).select("*").order("created_at",{ascending:false});
+    return ok(data, error, "clients.list");
+  },
+  async create(input: any) {
+    const user_id = await requireUserId();
+    const { data, error } = await supabase.from(TABLE.CLIENTS).insert({ ...input, user_id }).select().single();
+    return ok(data, error, "clients.create");
+  },
+  async update(id: string, patch: any) {
+    const { data, error } = await supabase.from(TABLE.CLIENTS).update(patch).eq("id", id).select().single();
+    return ok(data, error, "clients.update");
+  },
+  async remove(id: string) {
+    const { error } = await supabase.from(TABLE.CLIENTS).delete().eq("id", id);
+    ok(null, error, "clients.remove");
+  },
 };
 
-export const InksDAO={
-  async list(){ const {data,error}=await supabase.from("inks").select("*").order("created_at",{ascending:false}); if(error) throw error; return data??[]; },
-  async create(input:any){ const user_id=await uid(); if(!user_id) throw new Error("unauth"); const {data,error}=await supabase.from("inks").insert({ ...input, user_id }).select().single(); if(error) throw error; return data; },
-  async update(id:string, patch:any){ const {data,error}=await supabase.from("inks").update(patch).eq("id",id).select().single(); if(error) throw error; return data; },
-  async remove(id:string){ const {error}=await supabase.from("inks").delete().eq("id",id); if(error) throw error; }
+export const MaterialsDAO = {
+  async list() {
+    const { data, error } = await supabase.from(TABLE.MATERIALS).select("*").order("created_at",{ascending:false});
+    return ok(data, error, "materials.list");
+  },
+  async create(input: any) {
+    const user_id = await requireUserId();
+    const { data, error } = await supabase.from(TABLE.MATERIALS).insert({ ...input, user_id }).select().single();
+    return ok(data, error, "materials.create");
+  },
+  async update(id: string, patch: any) {
+    const { data, error } = await supabase.from(TABLE.MATERIALS).update(patch).eq("id", id).select().single();
+    return ok(data, error, "materials.update");
+  },
+  async remove(id: string) {
+    const { error } = await supabase.from(TABLE.MATERIALS).delete().eq("id", id);
+    ok(null, error, "materials.remove");
+  },
 };
 
-export const ServicesDAO={
+export const InksDAO = {
+  async list() {
+    const { data, error } = await supabase.from(TABLE.INKS).select("*").order("created_at",{ascending:false});
+    return ok(data, error, "inks.list");
+  },
+  async create(input: any) {
+    const user_id = await requireUserId();
+    const { data, error } = await supabase.from(TABLE.INKS).insert({ ...input, user_id }).select().single();
+    return ok(data, error, "inks.create");
+  },
+  async update(id: string, patch: any) {
+    const { data, error } = await supabase.from(TABLE.INKS).update(patch).eq("id", id).select().single();
+    return ok(data, error, "inks.update");
+  },
+  async remove(id: string) {
+    const { error } = await supabase.from(TABLE.INKS).delete().eq("id", id);
+    ok(null, error, "inks.remove");
+  },
+};
+
+export const ServicesDAO = {
   async list(){
-    const {data,error}=await supabase.from("service_orders").select(`
-      *, client:clients(*),
-      items:service_items(*), inks:service_inks(*)
-    `).order("created_at",{ascending:false});
-    if(error) throw error; return data??[];
+    // 1ª tentativa: embed pelo FK nomeado
+    let { data, error } = await supabase
+      .from(TABLE.SERVICE_ORDERS)
+      .select(`
+        *,
+        client:${TABLE.CLIENTS}!service_orders_client_id_fkey(*),
+        items:${TABLE.SERVICE_ITEMS}(*),
+        inks:${TABLE.SERVICE_INKS}(*),
+        extras:${TABLE.SERVICE_EXTRAS}(*),
+        discounts:${TABLE.SERVICE_DISCOUNTS}(*),
+        payments:${TABLE.SERVICE_PAYMENTS}(*),
+        comments:${TABLE.SERVICE_COMMENTS}(*)
+      `)
+      .order("created_at",{ascending:false});
+
+    if (!error) return data ?? [];
+
+    // Fallback: sem embed + buscar clients e mesclar
+    if (isRelErr(error)) {
+      const { data: rows, error: e1 } = await supabase
+        .from(TABLE.SERVICE_ORDERS)
+        .select("*")
+        .order("created_at",{ascending:false});
+      if (e1) { logSupa("service_orders.list.base", e1); throw new Error(e1.message || "Falha list base"); }
+
+      const ids = [...new Set(rows.map(r => r.client_id).filter(Boolean))];
+      let map:any = {};
+      if (ids.length) {
+        const { data: cls, error: e2 } = await supabase
+          .from(TABLE.CLIENTS)
+          .select("*")
+          .in("id", ids);
+        if (e2) { logSupa("service_orders.list.clients", e2); }
+        if (cls) map = Object.fromEntries(cls.map(c => [c.id, c]));
+      }
+
+      // Itens/inks (opcional no fallback; se precisar, carregar e agrupar)
+      const merge = rows.map(r => ({ ...r, client: map[r.client_id] ?? null }));
+      return merge;
+    }
+
+    const msg = logSupa("service_orders.list", error);
+    throw new Error(msg);
   },
-  async create(input:any){
-    const user_id=await uid(); if(!user_id) throw new Error("unauth");
-    const {items=[],inks=[],...rest}=input;
-    const {data:so,error}=await supabase.from("service_orders").insert({ ...rest, user_id }).select().single();
-    if(error) throw error; const sid=so.id;
-    const ins=async(tbl:string,rows:any[])=> rows.length && await supabase.from(tbl).insert(rows.map(r=>({...r,service_id:sid})));
-    await ins("service_items",items); await ins("service_inks",inks);
-    return await this.get(sid);
-  },
+
   async get(id:string){
-    const {data,error}=await supabase.from("service_orders").select(`
-      *, client:clients(*),
-      items:service_items(*), inks:service_inks(*)
-    `).eq("id",id).single(); if(error) throw error; return data;
+    // 1ª tentativa: embed com hint
+    let { data, error } = await supabase
+      .from(TABLE.SERVICE_ORDERS)
+      .select(`
+        *,
+        client:${TABLE.CLIENTS}!service_orders_client_id_fkey(*),
+        items:${TABLE.SERVICE_ITEMS}(*),
+        inks:${TABLE.SERVICE_INKS}(*),
+        extras:${TABLE.SERVICE_EXTRAS}(*),
+        discounts:${TABLE.SERVICE_DISCOUNTS}(*),
+        payments:${TABLE.SERVICE_PAYMENTS}(*),
+        comments:${TABLE.SERVICE_COMMENTS}(*)
+      `)
+      .eq("id", id)
+      .single();
+
+    if (!error) return data;
+
+    // Fallback: sem embed + fetch client/items/inks
+    if (isRelErr(error)) {
+      const { data: so, error: e1 } = await supabase.from(TABLE.SERVICE_ORDERS).select("*").eq("id", id).single();
+      if (e1) { logSupa("service_orders.get.base", e1); throw new Error(e1.message || "Falha get base"); }
+
+      let client = null, items:any[] = [], inks:any[] = [];
+      if (so?.client_id) {
+        const { data: c } = await supabase.from(TABLE.CLIENTS).select("*").eq("id", so.client_id).maybeSingle();
+        client = c ?? null;
+      }
+      const i1 = await supabase.from(TABLE.SERVICE_ITEMS).select("*").eq("service_id", id);
+      if (!i1.error) items = i1.data ?? [];
+      const i2 = await supabase.from(TABLE.SERVICE_INKS).select("*").eq("service_id", id);
+      if (!i2.error) inks = i2.data ?? [];
+
+      return { ...so, client, items, inks };
+    }
+
+    const msg = logSupa("service_orders.get", error);
+    throw new Error(msg);
   },
-  async update(id:string,patch:any){
-    const {items,inks,...rest}=patch;
-    if(Object.keys(rest).length){ const {error}=await supabase.from("service_orders").update(rest).eq("id",id); if(error) throw error; }
-    const rep=async(tbl:string,rows:any[])=>{ await supabase.from(tbl).delete().eq("service_id",id); if(rows) rows.length&&await supabase.from(tbl).insert(rows.map((r:any)=>({...r,service_id:id}))); };
-    if(items) await rep("service_items",items);
-    if(inks) await rep("service_inks",inks);
-    return await this.get(id);
+
+  async create(input: any) {
+    const user_id = await requireUserId();
+    const { data, error } = await supabase.from(TABLE.SERVICE_ORDERS).insert({ ...input, user_id }).select().single();
+    return ok(data, error, "service_orders.create");
   },
-  async remove(id:string){ const {error}=await supabase.from("service_orders").delete().eq("id",id); if(error) throw error; }
+
+  async update(id: string, patch: any) {
+    const { data, error } = await supabase.from(TABLE.SERVICE_ORDERS).update(patch).eq("id", id).select().single();
+    return ok(data, error, "service_orders.update");
+  },
+
+  async remove(id: string) {
+    const { error } = await supabase.from(TABLE.SERVICE_ORDERS).delete().eq("id", id);
+    ok(null, error, "service_orders.remove");
+  },
 };
 
-export const SettingsDAO={
-  async get(){ const u=await uid(); if(!u) throw new Error("unauth"); const {data,error}=await supabase.from("settings").select("*").eq("user_id",u).maybeSingle(); if(error) throw error; return data; },
-  async upsert(patch:any){ const u=await uid(); if(!u) throw new Error("unauth"); const {data,error}=await supabase.from("settings").upsert({ user_id:u, ...patch }).select().single(); if(error) throw error; return data; }
+export const SettingsDAO = {
+  async get() {
+    const user_id = await requireUserId();
+    const { data, error } = await supabase.from(TABLE.SETTINGS).select("*").eq("user_id", user_id).single();
+    return ok(data, error, "settings.get");
+  },
+  async upsert(input: any) {
+    const user_id = await requireUserId();
+    const { data, error } = await supabase.from(TABLE.SETTINGS).upsert({ ...input, user_id }).select().single();
+    return ok(data, error, "settings.upsert");
+  },
 };
