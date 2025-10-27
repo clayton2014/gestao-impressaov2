@@ -1,160 +1,151 @@
-"use client";
-import React from "react";
-import { useRouter } from "next/navigation";
-import useAppStore, { actions } from "@/lib/store";
-import useTranslation from "@/hooks/useTranslation";
-import { SunMoon, Globe, DollarSign, User as UserIcon, ChevronDown, Bot } from "lucide-react";
+'use client';
+
+// src/components/Header.tsx (no topo: remova qualquer import de "next-themes" ou "next-themes/dist/index")
+// ...mantenha seus outros imports
 
 async function saveSettings(patch: any) {
-  actions.patchSettings(patch);
+  // atualiza store/DB como você já faz…
   try {
-    const { SettingsDAO } = await import("@/lib/dao"); await SettingsDAO.upsert(patch);
+    const { SettingsDAO } = await import("@/lib/dao");
+    await SettingsDAO.upsert(patch);
   } catch {}
-  if (patch.theme) {
-    try {
-      const { setTheme } = await import("next-themes/dist/index"); setTheme(patch.theme);
-    } catch {
-      if (patch.theme === "dark") document.documentElement.classList.add("dark");
-      if (patch.theme === "light") document.documentElement.classList.remove("dark");
+
+  // aplicar tema local, sem next-themes
+  if (typeof document !== "undefined" && patch.theme) {
+    const root = document.documentElement;
+    if (patch.theme === "dark") root.classList.add("dark");
+    if (patch.theme === "light") root.classList.remove("dark");
+    if (patch.theme === "system") {
+      // opcional: seguir o sistema
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      root.classList.toggle("dark", prefersDark);
     }
   }
 }
 
-function Dropdown({button, children}:{button: React.ReactNode; children: React.ReactNode}) {
-  const [open, setOpen] = React.useState(false);
-  const ref = React.useRef<HTMLDivElement>(null);
-  React.useEffect(()=>{
-    const onDoc = (e: MouseEvent)=>{ if(ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", onDoc);
-    return ()=> document.removeEventListener("mousedown", onDoc);
-  },[]);
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={()=>setOpen(o=>!o)}
-        className="inline-flex items-center gap-2 rounded-md px-3 py-2 hover:bg-muted"
-      >
-        {button}
-        <ChevronDown className="h-4 w-4" />
-      </button>
-      {open && (
-        <div className="absolute right-0 mt-2 w-56 rounded-xl border bg-popover shadow-lg p-1 z-50">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
-function Item({active, onClick, children}:{active?:boolean; onClick?:()=>void; children:React.ReactNode}) {
-  return (
-    <button onClick={onClick} className={`w-full text-left px-3 py-2 rounded-lg hover:bg-muted ${active ? "bg-muted" : ""}`}>
-      {children}
-    </button>
-  );
-}
 
-// Busca nome real do Supabase (profiles) com fallbacks
-function useDisplayUser() {
-  const local = useAppStore((s:any)=>{
-    const arr = Array.isArray(s.users) ? s.users : [];
-    const uid = s?.auth?.userId;
-    return uid ? arr.find((u:any)=>u?.id===uid) ?? null : null;
-  });
-
-  const [sbUser, setSbUser] = React.useState<any>(null);
-  const [profile, setProfile] = React.useState<any>(null);
-
-  React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const { supabase } = await import("@/lib/supa");
-        const cur = await supabase.auth.getUser();
-        if (alive) setSbUser(cur.data.user ?? null);
-
-        // assina sessão
-        const sub = supabase.auth.onAuthStateChange((_e, sess) => {
-          if (alive) setSbUser(sess?.user ?? null);
-        });
-
-        // carrega perfil quando tiver user
-        if (cur.data.user?.id) {
-          const { data, error } = await supabase
-            .from("profiles")
-            .select("name,email,phone")
-            .eq("id", cur.data.user.id)
-            .maybeSingle();
-          if (!error && alive) setProfile(data ?? null);
-        }
-
-        return () => sub.data.subscription?.unsubscribe?.();
-      } catch {}
-    })();
-    return () => { alive = false; };
-  }, []);
-
-  const name =
-    profile?.name ||
-    local?.nome ||
-    local?.name ||
-    sbUser?.user_metadata?.name ||
-    sbUser?.email ||
-    "Usuário";
-
-  return { name };
-}
+import { 
+  Bell, 
+  Globe, 
+  User, 
+  LogOut,
+  Menu,
+  DollarSign,
+  Sun,
+  Moon
+} from 'lucide-react';
+import useAppStore, { actions } from '@/lib/store';
+import { useTranslation } from '@/hooks/useTranslation';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu';
+import { SafeSelect } from '@/components/ui/safe-select';
+import UserMenu from '@/components/UserMenu';
 
 export default function Header() {
-  const router = useRouter();
+  const sidebarOpen = useAppStore(s => s.sidebarOpen);
+  const currentPage = useAppStore(s => s.currentPage);
+  const locale = useAppStore(s => s.locale);
+  const currency = useAppStore(s => s.currency);
+  const theme = useAppStore(s => s.theme);
+  const user = useAppStore(s => s.users.find(u => u.id === s.auth.userId) ?? null);
+  
   const { t } = useTranslation();
-  const { name } = useDisplayUser();
 
-  const settings = useAppStore((s:any)=> s?.settings ?? {});
-  const currency = settings.currency ?? "BRL";
-  const locale = settings.locale ?? "pt-BR";
-  const theme = settings.theme ?? "system";
-
-  async function onLogout(){
-    try {
-      const { supabase } = await import("@/lib/supa");
-      await supabase.auth.signOut();
-    } catch {}
-    router.replace("/login");
-  }
+  const getPageTitle = () => {
+    switch (currentPage) {
+      case 'dashboard': return 'Dashboard';
+      case 'services': return 'Serviços';
+      case 'clients': return 'Clientes';
+      case 'materials': return 'Materiais';
+      case 'inks': return 'Tintas';
+      case 'reports': return 'Relatórios';
+      case 'settings': return 'Configurações';
+      case 'plans': return 'Planos';
+      default: return 'Dashboard';
+    }
+  };
 
   return (
-    <header className="w-full flex items-center justify-between px-4 py-3 border-b bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/50">
-      <div className="flex items-center gap-3">
-        <Bot className="h-5 w-5 text-primary" />
-        <span className="font-medium">GraphPrint</span>
-      </div>
+    <header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className="container flex h-14 items-center">
+        <div className="mr-4 hidden md:flex">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => actions.setSidebarOpen(!sidebarOpen)}
+            className="mr-2"
+          >
+            <Menu className="h-4 w-4" />
+          </Button>
+          <div className="flex items-center space-x-2">
+            <h1 className="text-lg font-semibold">{getPageTitle()}</h1>
+          </div>
+        </div>
 
-      <div className="flex items-center gap-1">
-        {/* Tema */}
-        <Dropdown button={<><SunMoon className="h-4 w-4"/><span>{t("Tema")}:</span><strong>{theme}</strong></>}>
-          <Item active={theme==="system"} onClick={()=>saveSettings({theme:"system"})}>{t("Sistema")}</Item>
-          <Item active={theme==="light"} onClick={()=>saveSettings({theme:"light"})}>{t("Claro")}</Item>
-          <Item active={theme==="dark"} onClick={()=>saveSettings({theme:"dark"})}>{t("Escuro")}</Item>
-        </Dropdown>
+        <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end">
+          <div className="w-full flex-1 md:w-auto md:flex-none">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => actions.setSidebarOpen(!sidebarOpen)}
+              className="md:hidden"
+            >
+              <Menu className="h-4 w-4" />
+            </Button>
+          </div>
 
-        {/* Moeda */}
-        <Dropdown button={<><DollarSign className="h-4 w-4"/><span>{t("Moeda")}:</span><strong>{currency}</strong></>}>
-          <Item active={currency==="BRL"} onClick={()=>saveSettings({currency:"BRL"})}>BRL — Real</Item>
-          <Item active={currency==="USD"} onClick={()=>saveSettings({currency:"USD"})}>USD — Dollar</Item>
-        </Dropdown>
+          <nav className="flex items-center space-x-2">
+            {/* Language Selector */}
+            <SafeSelect
+              value={locale}
+              onChange={actions.setLocale}
+              options={[
+                { value: "pt-BR", label: "🇧🇷 PT" },
+                { value: "en", label: "🇺🇸 EN" }
+              ]}
+              className="w-20"
+            />
 
-        {/* Idioma */}
-        <Dropdown button={<><Globe className="h-4 w-4"/><span>{t("Idioma")}:</span><strong>{locale}</strong></>}>
-          <Item active={locale==="pt-BR"} onClick={()=>saveSettings({locale:"pt-BR", currency:"BRL"})}>Português (BR)</Item>
-          <Item active={locale==="en-US"} onClick={()=>saveSettings({locale:"en-US", currency:"USD"})}>English (US)</Item>
-        </Dropdown>
+            {/* Currency Selector */}
+            <SafeSelect
+              value={currency}
+              onChange={actions.setCurrency}
+              options={[
+                { value: "BRL", label: "R$" },
+                { value: "USD", label: "$" }
+              ]}
+              className="w-16"
+            />
 
-        {/* Conta */}
-        <Dropdown button={<><UserIcon className="h-4 w-4"/><span>{name}</span></>}>
-          <Item onClick={()=>router.push("/settings")}>{t("Minha conta")}</Item>
-          <hr className="my-1 border-border" />
-          <Item onClick={onLogout}>{t("Sair")}</Item>
-        </Dropdown>
+            {/* Theme Toggle */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => actions.setTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
+              {theme === 'dark' ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <Moon className="h-4 w-4" />
+              )}
+            </Button>
+
+            {/* Notifications */}
+            <Button variant="ghost" size="sm">
+              <Bell className="h-4 w-4" />
+            </Button>
+
+            {/* User Menu */}
+            <UserMenu />
+          </nav>
+        </div>
       </div>
     </header>
   );
