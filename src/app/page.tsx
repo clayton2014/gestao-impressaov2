@@ -1,5 +1,9 @@
 "use client";
 
+// src/app/page.tsx (logo após "use client")
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supa';
 import { getUser } from '@/lib/auth-client';
